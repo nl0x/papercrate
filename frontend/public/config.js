@@ -1,0 +1,1 @@
+window.__PAPERCRATE_API_BASE_URL = window.__PAPERCRATE_API_BASE_URL || '';

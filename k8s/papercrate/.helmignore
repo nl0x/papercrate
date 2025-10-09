@@ -1,0 +1,9 @@
+# Common VCS dirs
+.git/
+.svn/
+.hg/
+
+# IDE files
+.idea/
+.vscode/
+.DS_Store

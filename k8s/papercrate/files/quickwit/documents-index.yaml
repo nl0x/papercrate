@@ -1,0 +1,28 @@
+version: 0.8
+index_id: documents
+doc_mapping:
+  tokenizers:
+    - name: substring
+      type: ngram
+      min_gram: 2
+      max_gram: 20
+      prefix_only: false
+  field_mappings:
+    - name: document_id
+      type: text
+      stored: true
+    - name: version_id
+      type: text
+      stored: true
+    - name: title
+      type: text
+      tokenizer: substring
+      stored: true
+    - name: text
+      type: text
+      tokenizer: substring
+      record: position
+search_settings:
+  default_search_fields:
+    - title
+    - text

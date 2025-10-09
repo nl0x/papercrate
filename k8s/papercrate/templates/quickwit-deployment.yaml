@@ -1,0 +1,98 @@
+{{- if .Values.quickwit.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "papercrate.fullname" . }}-quickwit
+  labels:
+    {{- include "papercrate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: quickwit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "papercrate.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: quickwit
+  template:
+    metadata:
+      labels:
+        {{- include "papercrate.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: quickwit
+    spec:
+      {{- if or .Values.global.imagePullSecrets .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- $qw := dict "storageUri" .Values.quickwit.env.storageUri "metastoreUri" .Values.quickwit.env.metastoreUri -}}
+      {{- if and (not (index $qw "storageUri")) .Values.global.s3.bucket -}}
+        {{- $_ := set $qw "storageUri" (printf "s3://%s/quickwit" .Values.global.s3.bucket) -}}
+      {{- end -}}
+      {{- if not (index $qw "storageUri") -}}
+        {{- fail "quickwit.env.storageUri must be set, or provide global.s3.bucket" -}}
+      {{- end -}}
+      {{- if and (not (index $qw "metastoreUri")) .Values.postgres.enabled -}}
+        {{- $dbUser := required "postgres.auth.username is required when postgres.enabled" .Values.postgres.auth.username -}}
+        {{- $dbPass := required "postgres.auth.password is required when postgres.enabled" .Values.postgres.auth.password -}}
+        {{- $dbHost := printf "%s-postgres" (include "papercrate.fullname" .) -}}
+        {{- $_ := set $qw "metastoreUri" (printf "postgres://%s:%s@%s:5432/quickwit" $dbUser $dbPass $dbHost) -}}
+      {{- end -}}
+      {{- if not (index $qw "metastoreUri") -}}
+        {{- fail "quickwit.env.metastoreUri must be set when not using bundled Postgres" -}}
+      {{- end }}
+      containers:
+        - name: quickwit
+          image: {{ include "papercrate.quickwit.image" . }}:{{ include "papercrate.image.tag" (dict "image" .Values.quickwit.image "Chart" .Chart) }}
+          imagePullPolicy: {{ .Values.quickwit.image.pullPolicy }}
+          args: ["run"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.quickwit.service.port }}
+              protocol: TCP
+          env:
+            - name: QW_STORAGE_URI
+              value: {{ index $qw "storageUri" | quote }}
+            - name: QW_METASTORE_URI
+              value: {{ index $qw "metastoreUri" | quote }}
+            {{- with .Values.global.s3.endpoint }}
+            - name: AWS_ENDPOINT_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.global.s3.region }}
+            - name: AWS_REGION
+              value: {{ . | quote }}
+            {{- end }}
+            {{- range .Values.quickwit.env.extra }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+          {{- if or .Values.quickwit.envFrom .Values.global.s3.credentialsSecret }}
+          envFrom:
+            {{- with .Values.global.s3.credentialsSecret }}
+            - secretRef:
+                name: {{ . }}
+            {{- end }}
+            {{- range .Values.quickwit.envFrom }}
+            - {{ toYaml . | nindent 12 | trim }}
+            {{- end }}
+          {{- end }}
+          {{- with .Values.quickwit.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.quickwit.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.quickwit.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.quickwit.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

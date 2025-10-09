@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# Rust
+/backend/target/
+/backend/.env
+/backend/.env.*
+/backend/.cargo/
+backend/libpdfium.*
+
+# Node/Frontend
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.env
+/frontend/.env.*
+
+# Logs and temp
+*.log
+*.tmp
+*.swp
+
+# Docker artifacts
+*.pid
+
+# Environment overrides
+.env
+.env.local

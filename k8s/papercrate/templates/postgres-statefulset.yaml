@@ -1,0 +1,112 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "papercrate.fullname" . }}-postgres
+  labels:
+    {{- include "papercrate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  serviceName: {{ include "papercrate.fullname" . }}-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "papercrate.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgres
+  template:
+    metadata:
+      labels:
+        {{- include "papercrate.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres
+    spec:
+      {{- if or .Values.global.imagePullSecrets .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- $dbList := keys .Values.postgres.auth.databases }}
+      {{- $primaryDb := "" }}
+      {{- if gt (len $dbList) 0 }}
+      {{- $primaryDb = index $dbList 0 }}
+      {{- end }}
+      containers:
+        - name: postgres
+          image: {{ include "papercrate.postgres.image" . }}:{{ include "papercrate.image.tag" (dict "image" .Values.postgres.image "Chart" .Chart) }}
+          imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "papercrate.fullname" . }}-postgres
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "papercrate.fullname" . }}-postgres
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              value: {{ default "postgres" $primaryDb | quote }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            {{- if .Values.postgres.auth.databases }}
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d/init-databases.sh
+              subPath: init-databases.sh
+            {{- end }}
+          {{- with .Values.postgres.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.postgres.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.postgres.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.postgres.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if or (not .Values.postgres.persistence.enabled) .Values.postgres.auth.databases }}
+      volumes:
+        {{- if not .Values.postgres.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+        {{- if .Values.postgres.auth.databases }}
+        - name: init-scripts
+          configMap:
+            name: {{ include "papercrate.fullname" . }}-postgres-init
+            defaultMode: 0755
+        {{- end }}
+      {{- end }}
+  {{- if .Values.postgres.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          {{- range .Values.postgres.persistence.accessModes }}
+          - {{ . }}
+          {{- end }}
+        {{- if .Values.postgres.persistence.storageClass }}
+        storageClassName: {{ .Values.postgres.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgres.persistence.size }}
+  {{- end }}
+{{- end }}

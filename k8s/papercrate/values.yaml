@@ -1,0 +1,156 @@
+global:
+  imageRegistry: ""
+  imagePullSecrets:
+    - papercrate-regcred
+  labels: {}
+  s3:
+    endpoint: http://minio:9000
+    region: us-east-1
+    bucket: documents
+    credentialsSecret: ""
+
+backend:
+  replicaCount: 1
+  image:
+    repository: registry.example.com/papercrate-backend
+    tag: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 3000
+  env:
+    existingSecret: ""
+    extra: []
+    jwtSecret: ""
+  envFrom: []
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+webdav:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: registry.example.com/papercrate-backend
+    tag: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 3001
+  env:
+    existingSecret: ""
+    extra: []
+  envFrom: []
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+worker:
+  replicaCount: 1
+  enabled: true
+  env:
+    existingSecret: ""
+    extra: []
+  envFrom: []
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+frontend:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: registry.example.com/papercrate-frontend
+    tag: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+  env:
+    existingSecret: ""
+    extra: []
+  envFrom: []
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: app.papercrate.local
+      paths:
+        - path: /
+          pathType: Prefix
+          service:
+            name: frontend
+            port: http
+    - host: api.papercrate.local
+      paths:
+        - path: /
+          pathType: Prefix
+          service:
+            name: backend
+            port: http
+  tls: []
+
+postgres:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "16-alpine"
+    pullPolicy: IfNotPresent
+  auth:
+    username: papercrate
+    password: papercrate_dev
+    databases:
+      papercrate: {}
+      quickwit: {}
+  maxConnections: 200
+  persistence:
+    enabled: true
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+    storageClass: ""
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+quickwit:
+  enabled: true
+  image:
+    repository: quickwit/quickwit
+    tag: "0.8.2"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 7280
+  env:
+    storageUri: ""
+    metastoreUri: ""
+    extra: []
+  envFrom: []
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  indexJob:
+    enabled: true
+    backoffLimit: 3
+    indexConfig:
+      existingConfigMap: ""
+      key: documents-index.yaml
+      create: true
+      file: files/quickwit/documents-index.yaml
+      contents: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""

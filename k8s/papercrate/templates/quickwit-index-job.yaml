@@ -1,0 +1,78 @@
+{{- if and .Values.quickwit.enabled .Values.quickwit.indexJob.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "papercrate.fullname" . }}-quickwit-index
+  labels:
+    {{- include "papercrate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: quickwit-index
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.quickwit.indexJob.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "papercrate.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: quickwit-index
+    spec:
+      restartPolicy: Never
+      {{- if or .Values.global.imagePullSecrets .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- $qw := dict "storageUri" .Values.quickwit.env.storageUri "metastoreUri" .Values.quickwit.env.metastoreUri -}}
+      {{- if and (not (index $qw "storageUri")) .Values.global.s3.bucket -}}
+        {{- $_ := set $qw "storageUri" (printf "s3://%s/quickwit" .Values.global.s3.bucket) -}}
+      {{- end -}}
+      {{- if not (index $qw "storageUri") -}}
+        {{- fail "quickwit.env.storageUri must be set, or provide global.s3.bucket" -}}
+      {{- end -}}
+      {{- if and (not (index $qw "metastoreUri")) .Values.postgres.enabled -}}
+        {{- $dbUser := required "postgres.auth.username is required when postgres.enabled" .Values.postgres.auth.username -}}
+        {{- $dbPass := required "postgres.auth.password is required when postgres.enabled" .Values.postgres.auth.password -}}
+        {{- $dbHost := printf "%s-postgres" (include "papercrate.fullname" .) -}}
+        {{- $_ := set $qw "metastoreUri" (printf "postgres://%s:%s@%s:5432/quickwit" $dbUser $dbPass $dbHost) -}}
+      {{- end -}}
+      {{- if not (index $qw "metastoreUri") -}}
+        {{- fail "quickwit.env.metastoreUri must be set when not using bundled Postgres" -}}
+      {{- end }}
+      containers:
+        - name: quickwit-index
+          image: {{ include "papercrate.quickwit.image" . }}:{{ include "papercrate.image.tag" (dict "image" .Values.quickwit.image "Chart" .Chart) }}
+          imagePullPolicy: {{ .Values.quickwit.image.pullPolicy }}
+          command:
+            - quickwit
+            - index
+            - create
+          args:
+            - --index-config=/config/{{ .Values.quickwit.indexJob.indexConfig.key }}
+            - --endpoint=http://{{ include "papercrate.fullname" . }}-quickwit:{{ .Values.quickwit.service.port }}
+          {{- if or .Values.quickwit.envFrom .Values.global.s3.credentialsSecret }}
+          envFrom:
+            {{- with .Values.global.s3.credentialsSecret }}
+            - secretRef:
+                name: {{ . }}
+            {{- end }}
+            {{- range .Values.quickwit.envFrom }}
+            - {{ toYaml . | nindent 12 | trim }}
+            {{- end }}
+          {{- end }}
+          {{- if or .Values.quickwit.indexJob.indexConfig.existingConfigMap .Values.quickwit.indexJob.indexConfig.create }}
+          volumeMounts:
+            - name: index-config
+              mountPath: /config
+          {{- end }}
+      {{- if or .Values.quickwit.indexJob.indexConfig.existingConfigMap .Values.quickwit.indexJob.indexConfig.create }}
+      volumes:
+        - name: index-config
+          configMap:
+            name: {{ if .Values.quickwit.indexJob.indexConfig.existingConfigMap }}{{ .Values.quickwit.indexJob.indexConfig.existingConfigMap }}{{ else }}{{ include "papercrate.fullname" . }}-quickwit-index{{ end }}
+      {{- end }}
+{{- end }}

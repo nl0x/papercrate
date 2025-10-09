@@ -1,0 +1,91 @@
+{{- if .Values.webdav.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "papercrate.fullname" . }}-webdav
+  labels:
+    {{- include "papercrate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: webdav
+spec:
+  replicas: {{ .Values.webdav.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "papercrate.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: webdav
+  template:
+    metadata:
+      labels:
+        {{- include "papercrate.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: webdav
+    spec:
+      {{- if or .Values.global.imagePullSecrets .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: webdav
+          image: {{ include "papercrate.webdav.image" . }}:{{ include "papercrate.image.tag" (dict "image" .Values.webdav.image "Chart" .Chart) }}
+          imagePullPolicy: {{ .Values.webdav.image.pullPolicy }}
+          command:
+            - /usr/local/bin/papercrate-webdav
+          ports:
+            - name: http
+              containerPort: {{ .Values.webdav.service.port }}
+              protocol: TCP
+          env:
+            - name: SERVER_HOST
+              value: 0.0.0.0
+            - name: SERVER_PORT
+              value: {{ .Values.webdav.service.port | quote }}
+            - name: WEBDAV_HOST
+              value: 0.0.0.0
+            - name: WEBDAV_PORT
+              value: {{ .Values.webdav.service.port | quote }}
+            {{- with .Values.global.s3.endpoint }}
+            - name: AWS_ENDPOINT_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.global.s3.region }}
+            - name: AWS_REGION
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.global.s3.bucket }}
+            - name: S3_BUCKET
+              value: {{ . | quote }}
+            {{- end }}
+            {{- range .Values.webdav.env.extra }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ if .Values.webdav.env.existingSecret }}{{ .Values.webdav.env.existingSecret }}{{ else }}{{ include "papercrate.fullname" . }}-backend-env{{ end }}
+            {{- with .Values.global.s3.credentialsSecret }}
+            - secretRef:
+                name: {{ . }}
+            {{- end }}
+            {{- range .Values.webdav.envFrom }}
+            - {{ toYaml . | nindent 12 | trim }}
+            {{- end }}
+          {{- with .Values.webdav.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.webdav.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.webdav.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.webdav.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

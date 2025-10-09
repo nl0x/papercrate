@@ -1,0 +1,66 @@
+Papercrate REST API
+===================
+
+Unless noted otherwise, endpoints below require a valid `Authorization: Bearer <token>` header.
+
+Authentication
+--------------
+- POST /api/auth/login - Exchange username/password for an access token and refresh cookie (public).
+- POST /api/auth/refresh - Rotate the refresh cookie and return a new access token (public, requires refresh cookie).
+- POST /api/auth/logout - Revoke the caller's refresh tokens and clear the cookie.
+- GET  /api/auth/me - Return the authenticated principal payload.
+
+Health
+------
+- GET  /api/health - Lightweight liveness probe (no authentication required).
+
+Documents
+---------
+- GET  /api/documents - List or search documents. Optional filters: `folder_id` (defaults to root when omitted), `include_deleted`, `include_descendants` (defaults to true when a `folder_id` is provided and no other override is supplied), `query` (Quickwit full-text), `tags` (comma-separated tag UUIDs), and `correspondents` (comma-separated correspondent UUIDs). Each entry includes tags, correspondent assignments, and current version info.
+- POST /api/documents - Upload a document via multipart form-data (`file`, optional metadata/folder fields).
+- POST /api/documents/reanalyze - Queue re-analysis for every non-deleted document.
+- POST /api/documents/bulk/move - Move multiple documents to a target folder.
+- POST /api/documents/bulk/tags - Add or remove tags across multiple documents.
+- POST /api/documents/bulk/correspondents - Bulk correspondent actions. Default `action=add` replaces existing assignments for the provided roles before adding the supplied correspondents; `action=remove` drops the specified correspondent/role pairs.
+- POST /api/documents/bulk/reanalyze - Queue re-analysis jobs for selected documents.
+- GET  /api/documents/:id - Retrieve metadata and current version details for a document.
+- PATCH /api/documents/:id - Update document metadata (currently title).
+- DELETE /api/documents/:id - Soft-delete a document.
+- GET  /api/documents/:id/download - Create a pre-signed download URL for the current version.
+- PATCH /api/documents/:id/folder - Move a document to another folder.
+- POST /api/documents/:id/tags - Assign one or more tags to a document.
+- DELETE /api/documents/:id/tags/:tag_id - Remove a single tag from a document.
+- POST /api/documents/:id/correspondents - Assign correspondents to roles (`assignments[]` with `correspondent_id` and `role`; optional `replace=true` overwrites existing assignments for those roles). Valid roles: `sender`, `receiver`, `other`.
+- DELETE /api/documents/:id/correspondents/:correspondent_id - Remove a correspondent assignment (requires `role` query string).
+
+Document Assets
+---------------
+- GET  /api/documents/:id/assets - List generated assets for the current version.
+- POST /api/documents/:id/assets - Request (re)generation of document assets; accepts optional `force` query flag.
+- GET  /api/documents/:id/assets/:asset_id - Fetch metadata and a pre-signed URL for a specific asset.
+
+Downloads
+---------
+- GET  /download/:token - Follow a one-time download token; redirects to a pre-signed URL (public token required).
+
+Folders
+-------
+- POST /api/folders - Create a folder (optionally under a parent).
+- POST /api/folders/path - Ensure a nested folder path exists, creating missing segments.
+- GET  /api/folders/:id/contents - List subfolders and documents inside a folder; use `root` for the workspace root.
+- DELETE /api/folders/:id - Soft-delete a folder.
+- PATCH /api/folders/:id - Update a folder's parent (`parent_id`) and/or rename it (`name`).
+
+Tags
+----
+- GET  /api/tags - List all tags with usage counts.
+- POST /api/tags - Create a new tag.
+- PATCH /api/tags/:id - Update a tag's label or color.
+- DELETE /api/tags/:id - Remove a tag; fails with 400 if still assigned to any document.
+
+Correspondents
+--------------
+- GET  /api/correspondents - List correspondents with usage totals and per-role counts (roles: `sender`, `receiver`, `other`).
+- POST /api/correspondents - Create a correspondent (name + optional metadata JSON).
+- PATCH /api/correspondents/:id - Update name and/or metadata.
+- DELETE /api/correspondents/:id - Remove a correspondent; fails with 400 if referenced by any document.

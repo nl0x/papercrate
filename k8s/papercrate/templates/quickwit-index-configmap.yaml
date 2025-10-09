@@ -1,0 +1,34 @@
+{{- if and .Values.quickwit.enabled .Values.quickwit.indexJob.enabled .Values.quickwit.indexJob.indexConfig.create }}
+{{- $cfg := .Values.quickwit.indexJob.indexConfig -}}
+{{- $config := dict "value" "" -}}
+{{- if $cfg.file }}
+  {{- with $.Files.Get $cfg.file -}}
+    {{- $_ := set $config "value" . -}}
+  {{- end -}}
+{{- end -}}
+{{- if and (not (index $config "value")) $cfg.contents }}
+  {{- $_ := set $config "value" $cfg.contents -}}
+{{- end -}}
+{{- if eq (trim (default "" (index $config "value"))) "" -}}
+  {{- fail "Quickwit index configuration requires either indexConfig.file or indexConfig.contents" -}}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "papercrate.fullname" . }}-quickwit-index
+  labels:
+    {{- include "papercrate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: quickwit
+    app.kubernetes.io/part-of: quickwit-index
+data:
+  {{ $cfg.key }}: |
+{{ index $config "value" | indent 4 }}
+{{- $ctx := dict "storageUri" (.Values.quickwit.env.storageUri | default "") -}}
+{{- if and (eq (index $ctx "storageUri") "") .Values.global.s3.bucket -}}
+{{- $_ := set $ctx "storageUri" (printf "s3://%s/quickwit" .Values.global.s3.bucket) -}}
+{{- end -}}
+{{- $storageUri := index $ctx "storageUri" -}}
+{{- if $storageUri }}
+{{ printf "index_uri: %s/documents" (trimSuffix "/" $storageUri) | indent 4 }}
+{{- end }}
+{{- end }}

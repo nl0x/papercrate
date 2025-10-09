@@ -1,0 +1,52 @@
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: papercrate
+      POSTGRES_PASSWORD: papercrate_test
+      POSTGRES_DB: papercrate_test
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U papercrate"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  quickwit:
+    image: quickwit/quickwit:0.8.2
+    command: ["run"]
+    environment:
+      QW_ENABLE_API_AUTH: "false"
+      QW_DATA_DIR: /quickwit/data
+    ports:
+      - "7280:7280"
+    volumes:
+      - quickwit_test_data:/quickwit/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:7280/api/v1/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  quickwit-create-index:
+    image: quickwit/quickwit:0.8.2
+    depends_on:
+      quickwit:
+        condition: service_healthy
+    volumes:
+      - quickwit_test_data:/quickwit/data
+      - ./quickwit/documents-index.yaml:/tmp/documents-index.yaml:ro
+    environment:
+      QW_DATA_DIR: /quickwit/data
+      QW_NODE_URI: http://quickwit:7280
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      quickwit index list --node-uri http://quickwit:7280 2>/dev/null | grep -q '"documents"' \
+        || quickwit index create --index-config /tmp/documents-index.yaml --node-uri http://quickwit:7280
+    restart: "no"
+
+volumes:
+  quickwit_test_data:

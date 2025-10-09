@@ -1,0 +1,27 @@
+{{- if and .Values.postgres.enabled .Values.postgres.auth.databases }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "papercrate.fullname" . }}-postgres-init
+  labels:
+    {{- include "papercrate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+data:
+  init-databases.sh: |
+    #!/bin/sh
+    set -e
+    {{- range $name, $_ := .Values.postgres.auth.databases }}
+    if ! psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
+      -tAc "SELECT 1 FROM pg_database WHERE datname = '{{ $name }}'" | grep -q 1; then
+      psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
+        -c "CREATE DATABASE \"{{ $name }}\"";
+    fi
+    {{- end }}
+    if [ -n "$PGDATA" ] && [ -f "$PGDATA/postgresql.conf" ]; then
+      if grep -q "^max_connections" "$PGDATA/postgresql.conf"; then
+        sed -i "s/^max_connections.*/max_connections = {{ .Values.postgres.maxConnections | default 200 }}/" "$PGDATA/postgresql.conf"
+      else
+        echo "max_connections = {{ .Values.postgres.maxConnections | default 200 }}" >> "$PGDATA/postgresql.conf"
+      fi
+    fi
+{{- end }}

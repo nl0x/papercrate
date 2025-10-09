@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+      - staging
+  tags:
+    - '*'
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - service: frontend
+            context: frontend
+            dockerfile: frontend/Dockerfile
+          - service: backend
+            context: backend
+            dockerfile: backend/Dockerfile
+
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Login to Docker Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ vars.REGISTRY_URL }}
+          username: ${{ vars.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: remote
+          endpoint: ${{ env.BUILDKIT_ARM64_ENDPOINT }}
+
+      - name: Build and Push ${{ matrix.service }} Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: |
+            ${{ vars.REGISTRY_URL }}/${{ gitea.repository }}-${{ matrix.service }}:${{ gitea.ref_type == 'tag' && gitea.ref_name || (gitea.ref_name == 'main' && 'latest' || gitea.ref_name) }}
+            ${{ vars.REGISTRY_URL }}/${{ gitea.repository }}-${{ matrix.service }}:${{ gitea.sha }}

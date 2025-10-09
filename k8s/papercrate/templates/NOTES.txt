@@ -1,0 +1,6 @@
+1. Backend service: {{ include "papercrate.fullname" . }}-backend (port {{ .Values.backend.service.port }})
+2. Frontend service: {{- if .Values.frontend.enabled }} {{ include "papercrate.fullname" . }}-frontend (port {{ .Values.frontend.service.port }}){{ else }} disabled{{ end }}
+3. Quickwit service: {{- if .Values.quickwit.enabled }} {{ include "papercrate.fullname" . }}-quickwit (port {{ .Values.quickwit.service.port }}){{ else }} disabled{{ end }}
+4. Postgres service: {{- if .Values.postgres.enabled }} {{ include "papercrate.fullname" . }}-postgres:5432{{ else }} disabled{{ end }}
+
+Update values.yaml with your registry, tags, and secret references before installing.

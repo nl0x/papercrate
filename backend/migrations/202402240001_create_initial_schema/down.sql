@@ -1,0 +1,11 @@
+DROP INDEX IF EXISTS idx_document_tags_tag;
+DROP TABLE IF EXISTS document_tags;
+DROP INDEX IF EXISTS idx_document_versions_document;
+DROP TABLE IF EXISTS document_versions;
+DROP INDEX IF EXISTS idx_documents_deleted_at;
+DROP INDEX IF EXISTS idx_documents_folder;
+DROP TABLE IF EXISTS documents;
+DROP INDEX IF EXISTS idx_folders_parent;
+DROP TABLE IF EXISTS folders;
+DROP TABLE IF EXISTS tags;
+DROP TABLE IF EXISTS users;

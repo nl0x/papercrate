@@ -1,0 +1,19 @@
+{{- if .Values.webdav.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "papercrate.fullname" . }}-webdav
+  labels:
+    {{- include "papercrate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: webdav
+spec:
+  type: {{ .Values.webdav.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.webdav.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "papercrate.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: webdav
+{{- end }}
