@@ -1,5 +1,15 @@
 # Papercrate
 
+## Local Development
+
+Use the provided `papercrate.tmux` to spin up the full stack in one tmux session:
+
+```bash
+tmux -f papercrate.tmux attach
+```
+
+This creates windows for the compose stack, frontend dev server, backend API, and background worker using the repository-relative paths defined in the tmux file. Detach with `Ctrl+b d` and reattach later with the same command.
+
 ## Backend Integration Tests
 
 Integration tests require a running Postgres instance (and, optionally, Quickwit for OCR indexing). The repository includes a lightweight compose file for local runs:
