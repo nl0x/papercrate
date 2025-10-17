@@ -1,9 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { resolveDocumentAssetUrl } from '../asset_manager';
 import { getTagColorStyle } from '../utils/colors';
-import { DownloadIcon, EditIcon, ViewListIcon, ViewGridIcon } from '../ui/icons';
-
-const FOLDER_ICON_SRC = '/folder.svg';
+import { DownloadIcon, EditIcon, ViewListIcon, ViewGridIcon, FolderIcon } from '../ui/icons';
 
 const TAG_MIME_TYPES = ['application/x-papercrate-tag', 'text/papercrate-tag'];
 
@@ -370,10 +368,9 @@ const DocumentsTable = ({
                       }}
                     >
                       <div className="folder-card__icon">
-                        <img
-                          src={FOLDER_ICON_SRC}
-                          alt="Folder"
+                        <FolderIcon
                           className="folder-card__icon-svg"
+                          size={128}
                         />
                       </div>
                       <div className="folder-card__meta">
@@ -550,10 +547,9 @@ const DocumentsTable = ({
                       >
                         <td className="thumb-cell">
                           <div className="thumb-icon">
-                            <img
-                              src={FOLDER_ICON_SRC}
-                              alt="Folder"
+                            <FolderIcon
                               className="thumb-icon__image"
+                              size={32}
                             />
                           </div>
                         </td>

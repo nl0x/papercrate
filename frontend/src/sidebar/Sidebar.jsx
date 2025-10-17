@@ -1,7 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
-import { ChevronIcon, TrashIcon, EditIcon } from '../ui/icons';
+import { ChevronIcon, TrashIcon, EditIcon, FolderIcon } from '../ui/icons';
 
-const FOLDER_ICON_SRC = '/folder.svg';
 import { getTagColorStyle } from '../utils/colors';
 
 const FolderNode = ({
@@ -68,7 +67,7 @@ const FolderNode = ({
           </span>
         )}
         <span className="name">
-          <img src={FOLDER_ICON_SRC} alt="Folder" className="folder-icon-image" />
+          <FolderIcon className="folder-icon-image" size={16} />
           {node.name}
         </span>
         {node.id !== 'root' && (

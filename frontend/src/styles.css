@@ -858,12 +858,6 @@ button.icon-button.ghost:hover:not([disabled]) {
   padding-right: 3rem;
 }
 
-.folder-row span.name .folder-icon-image {
-  width: 1rem;
-  height: 1rem;
-  flex-shrink: 0;
-}
-
 .folder-row:hover {
   background: var(--sidebar-hover-bg);
   color: var(--fg);

@@ -1,7 +1,6 @@
 import {
   IconChevronRight as TablerChevronRight,
   IconDownload as TablerDownload,
-  IconFolderFilled,
   IconPencil,
   IconTagFilled,
   IconUserFilled,
@@ -9,6 +8,7 @@ import {
   IconLayoutList,
   IconLayoutGrid,
 } from '@tabler/icons-react';
+import FolderSvg from '../assets/folder.svg';
 
 const composeClassName = (base, extra) => (extra ? `${base} ${extra}` : base);
 
@@ -39,14 +39,21 @@ export const EditIcon = ({ className, size = '1em', stroke = 1.6, ...rest }) => 
   />
 );
 
-export const FolderIcon = ({ className, size = '1em', stroke = 0, ...rest }) => (
-  <IconFolderFilled
-    className={composeClassName('icon icon--fill', className)}
-    size={size}
-    stroke={stroke}
-    {...rest}
-  />
-);
+export const FolderIcon = ({ className, size = 16, title, ...rest }) => {
+  const dimensionProps = typeof size === 'number' ? { width: size, height: size } : {};
+
+  return (
+    <FolderSvg
+      className={composeClassName('folder-icon', className)}
+      {...dimensionProps}
+      role={title ? 'img' : 'presentation'}
+      aria-hidden={title ? undefined : true}
+      focusable="false"
+      title={title}
+      {...rest}
+    />
+  );
+};
 
 export const TagIcon = ({ className, size = '1em', stroke = 0, ...rest }) => (
   <IconTagFilled

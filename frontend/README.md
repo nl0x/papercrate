@@ -44,4 +44,4 @@ npm run build
 
 ## Assets
 
-- The folder icon (`public/folder.svg`) is derived from the Adwaita icon theme by the [GNOME Project](http://www.gnome.org/).
+- The folder icon (`src/assets/folder.svg`) is derived from the Adwaita icon theme by the [GNOME Project](http://www.gnome.org/).
