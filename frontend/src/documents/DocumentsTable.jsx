@@ -1,11 +1,36 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { resolveDocumentAssetUrl } from '../asset_manager';
+import {getAssetFromVersion, resolveDocumentAssetUrl} from '../asset_manager';
 import { getTagColorStyle } from '../utils/colors';
 import { DownloadIcon, EditIcon, ViewListIcon, ViewGridIcon, FolderIcon } from '../ui/icons';
 
 const TAG_MIME_TYPES = ['application/x-papercrate-tag', 'text/papercrate-tag'];
 
-const DocumentThumbnailImage = ({ document, ensureAssetUrl, getDocumentAsset, alt }) => {
+const getPageCount = (doc) =>
+  Number.isFinite(doc?.current_version?.metadata?.page_count)
+    ? doc.current_version.metadata.page_count
+    : null;
+
+const DocumentThumbnailImage = ({ document, ensureAssetUrl, getDocumentAsset, alt, maxSize = 48 }) => {
+  const resolvedMaxSize = Math.max(1, Math.round(maxSize || 1));
+  const thumbnailAsset = useMemo(() => getAssetFromVersion(document?.current_version, 'thumbnail'), [document?.current_version]);
+  const assetWidth = Number(thumbnailAsset?.metadata?.width);
+  const assetHeight = Number(thumbnailAsset?.metadata?.height);
+
+  const dimensions = useMemo(() => {
+    if (!Number.isFinite(assetWidth) || assetWidth <= 0 || !Number.isFinite(assetHeight) || assetHeight <= 0) {
+      return { width: resolvedMaxSize, height: resolvedMaxSize };
+    }
+    const scale = Math.min(1, resolvedMaxSize / assetWidth, resolvedMaxSize / assetHeight);
+    return {
+      width: Math.max(1, Math.round(assetWidth * scale)),
+      height: Math.max(1, Math.round(assetHeight * scale)),
+    };
+  }, [assetWidth, assetHeight, resolvedMaxSize]);
+
+  const innerStyle = useMemo(
+    () => ({ width: `${dimensions.width}px`, height: `${dimensions.height}px` }),
+    [dimensions.height, dimensions.width],
+  );
   const url = useMemo(
     () =>
       resolveDocumentAssetUrl(document, 'thumbnail', {
@@ -15,19 +40,28 @@ const DocumentThumbnailImage = ({ document, ensureAssetUrl, getDocumentAsset, al
     [document, ensureAssetUrl, getDocumentAsset],
   );
 
+  const pageCount = getPageCount(document);
+  const showMultiPageBadge = Number.isFinite(pageCount) && pageCount > 1;
+  const innerClasses = ['document-thumbnail-inner'];
+  if (showMultiPageBadge) {
+    innerClasses.push('document-thumbnail-inner--multipage');
+  }
+
   return (
     <div className="document-thumbnail-wrapper">
-      {url ? (
-        <img
-          src={url}
-          alt={alt || ''}
-          className="document-thumbnail"
-          draggable={false}
-          onDragStart={(event) => event.preventDefault()}
-        />
-      ) : (
-        <div className="thumb-placeholder">DOC</div>
-      )}
+      <div className={innerClasses.join(' ')} style={innerStyle}>
+        {url ? (
+          <img
+            src={url}
+            alt={alt || ''}
+            className="document-thumbnail"
+            draggable={false}
+            onDragStart={(event) => event.preventDefault()}
+          />
+        ) : (
+          <div className="thumb-placeholder">DOC</div>
+        )}
+      </div>
     </div>
   );
 };
@@ -413,6 +447,7 @@ const DocumentsTable = ({
                       ensureAssetUrl={ensureAssetUrl}
                       getDocumentAsset={getDocumentAsset}
                       alt={`Thumbnail for ${doc.title || doc.original_name}`}
+                      maxSize={128}
                     />
                     <div className="document-card__meta">
                       <div

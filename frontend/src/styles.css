@@ -845,6 +845,7 @@ button.icon-button.ghost:hover:not([disabled]) {
   color: inherit;
   transition: background 0.12s ease, color 0.12s ease;
   position: relative;
+  display: inline-block;
 }
 
 .folder-row span.name {
@@ -1176,29 +1177,43 @@ button.icon-button.ghost:hover:not([disabled]) {
   text-align: center;
 }
 
-.document-thumbnail-wrapper {
-  width: 48px;
-  height: 48px;
+.documents-panel--view-grid .document-thumbnail-wrapper {
+  width: 128px;
+  height: 128px;
+  padding: 8px;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+
+.document-thumbnail-inner {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
-.documents-panel--view-grid .document-thumbnail-wrapper {
-  width: 128px;
-  height: 128px;
-  padding: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 10px;
-  overflow: hidden;
+.document-thumbnail-inner--multipage::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 24px;
+  height: 24px;
+  background-image: url('./assets/papercorner.svg');
+  background-repeat: no-repeat;
+  background-size: contain;
+  pointer-events: none;
+}
+
+.documents-panel--view-grid .document-thumbnail-inner--multipage::after {
+  width: 28px;
+  height: 28px;
 }
 
 .document-thumbnail {
   max-width: 100%;
   max-height: 100%;
-  object-fit: contain;
   box-shadow: 0 1px 6px var(--shadow-medium);
 }
 

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 128 128" xml:space="preserve" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;">
+    <defs>
+        <filter id="cornerShadow" x="-20%" y="-20%" width="200%" height="200%">
+            <feDropShadow dx="-4" dy="4" stdDeviation="8" flood-opacity="0.24"/>
+        </filter>
+        <linearGradient id="cornerGradient" gradientUnits="userSpaceOnUse" x1="32" y1="0" x2="0" y2="64">
+            <stop offset="0%" stop-color="#ffffff"/>
+            <stop offset="100%" stop-color="#f3f3f3"/>
+        </linearGradient>
+    </defs>
+    <g filter="url(#cornerShadow)">
+        <g transform="matrix(-1.81626,-1.81626,0.460023,-0.460023,180.663,203.387)">
+            <path d="M70.488,10.11L89.954,86.966L51.022,86.966L70.488,10.11Z" fill="url(#cornerGradient)"/>
+        </g>
+        <g transform="matrix(1.81626,1.81626,-0.460023,0.460023,4.6259,-132.676)">
+            <path d="M70.488,10.11L89.954,86.966L51.022,86.966L70.488,10.11Z" fill="#fdfdfd"/>
+        </g>
+    </g>
+</svg>
