@@ -649,6 +649,14 @@ const DetailPanel = ({
       ? new Date(singleDoc.issued_at).toLocaleString()
       : '—';
     const tagsForDoc = Array.isArray(singleDoc.tags) ? singleDoc.tags : [];
+    const pageCountRaw = singleDoc.current_version?.metadata?.page_count;
+    const pageCountValue =
+      typeof pageCountRaw === 'number'
+        ? pageCountRaw
+        : pageCountRaw != null && pageCountRaw !== ''
+        ? Number.parseInt(pageCountRaw, 10)
+        : null;
+    const hasPageCount = Number.isFinite(pageCountValue) && pageCountValue >= 0;
     const metadata =
       singleDoc.metadata && Object.keys(singleDoc.metadata).length > 0 ? singleDoc.metadata : null;
     return (
@@ -728,6 +736,11 @@ const DetailPanel = ({
           <div>
             <strong>Issued:</strong> {issuedAt}
           </div>
+          {hasPageCount ? (
+            <div>
+              <strong>Pages:</strong> {pageCountValue}
+            </div>
+          ) : null}
           <div>
             <strong>Original filename:</strong>{' '}
             {singleDoc.original_name}
