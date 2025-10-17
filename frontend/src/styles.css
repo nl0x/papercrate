@@ -1199,11 +1199,11 @@ button.icon-button.ghost:hover:not([disabled]) {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+  box-shadow: 0 1px 6px var(--shadow-medium);
 }
 
 .documents-panel--view-grid .document-thumbnail {
   box-shadow: 0 1px 12px var(--shadow-medium);
-  background: transparent;
 }
 
 .thumb-placeholder {
