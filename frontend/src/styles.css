@@ -1182,7 +1182,6 @@ button.icon-button.ghost:hover:not([disabled]) {
   height: 128px;
   padding: 8px;
   border-radius: 10px;
-  overflow: hidden;
 }
 
 
