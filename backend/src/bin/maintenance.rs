@@ -2,13 +2,14 @@ use std::env;
 
 use anyhow::{Context, Result};
 use diesel::prelude::*;
+use uuid::Uuid;
 
 use backend::{
     config::AppConfig,
     db,
-    models::DocumentAsset,
+    models::{DocumentAsset, DocumentAssetObject},
     s3,
-    schema::document_assets,
+    schema::{document_asset_objects, document_assets},
     storage::{ObjectStorage, S3Storage},
 };
 
@@ -57,11 +58,18 @@ async fn delete_all_assets() -> Result<()> {
 
     println!("Deleting {} assets…", assets.len());
 
-    for asset in &assets {
-        if let Err(err) = storage.delete_object(&asset.s3_key).await {
+    let asset_ids: Vec<Uuid> = assets.iter().map(|asset| asset.id).collect();
+
+    let objects: Vec<DocumentAssetObject> = document_asset_objects::table
+        .filter(document_asset_objects::asset_id.eq_any(&asset_ids))
+        .load(&mut conn)
+        .context("failed to load document asset objects")?;
+
+    for object in &objects {
+        if let Err(err) = storage.delete_object(&object.s3_key).await {
             eprintln!(
                 "Failed to delete object {} from storage: {err}",
-                asset.s3_key
+                object.s3_key
             );
         }
     }

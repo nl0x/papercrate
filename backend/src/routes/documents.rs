@@ -22,12 +22,13 @@ use crate::auth::AuthenticatedUser;
 use crate::error::{AppError, AppResult};
 use crate::jobs::{enqueue_job, JOB_ANALYZE_DOCUMENT};
 use crate::models::{
-    Correspondent, Document, DocumentAsset, DocumentCorrespondent, DocumentVersion, NewDocument,
-    NewDocumentCorrespondent, NewDocumentTag, NewDocumentVersion, Tag,
+    Correspondent, Document, DocumentAsset, DocumentAssetObject, DocumentCorrespondent,
+    DocumentVersion, NewDocument, NewDocumentCorrespondent, NewDocumentTag, NewDocumentVersion,
+    Tag,
 };
 use crate::schema::{
-    correspondents, document_assets, document_correspondents, document_tags, document_versions,
-    documents, folders, refresh_tokens::dsl as refresh_dsl, tags,
+    correspondents, document_asset_objects, document_assets, document_correspondents,
+    document_tags, document_versions, documents, folders, refresh_tokens::dsl as refresh_dsl, tags,
 };
 use crate::state::AppState;
 
@@ -856,7 +857,14 @@ pub async fn get_document_asset(
         return Err(AppError::not_found());
     }
 
-    let asset: DocumentAsset = document_assets::table.find(asset_id).first(&mut conn)?;
+    let (asset, object): (DocumentAsset, DocumentAssetObject) = document_assets::table
+        .inner_join(
+            document_asset_objects::table.on(document_asset_objects::asset_id
+                .eq(document_assets::id)
+                .and(document_asset_objects::ordinal.eq(1))),
+        )
+        .filter(document_assets::id.eq(asset_id))
+        .first(&mut conn)?;
     let version: DocumentVersion = document_versions::table
         .find(asset.document_version_id)
         .first(&mut conn)?;
@@ -865,7 +873,8 @@ pub async fn get_document_asset(
         return Err(AppError::not_found());
     }
 
-    let s3_key = asset.s3_key.clone();
+    let s3_key = object.s3_key.clone();
+    let object_metadata = object.metadata.clone();
     drop(conn);
 
     let presigned_url = state
@@ -874,7 +883,11 @@ pub async fn get_document_asset(
         .await
         .map_err(|err| AppError::internal(format!("failed to generate asset URL: {err}")))?;
 
-    Ok(Json(to_asset_response(asset, Some(presigned_url))))
+    Ok(Json(to_asset_response(
+        asset,
+        Some(object_metadata),
+        Some(presigned_url),
+    )))
 }
 
 pub async fn download_document(
@@ -1784,18 +1797,27 @@ pub(crate) async fn load_primary_assets(
         version_map.insert(version.id, version);
     }
 
-    let assets: Vec<DocumentAsset> = document_assets::table
+    let assets: Vec<(DocumentAsset, Option<DocumentAssetObject>)> = document_assets::table
+        .left_outer_join(
+            document_asset_objects::table.on(document_asset_objects::asset_id
+                .eq(document_assets::id)
+                .and(document_asset_objects::ordinal.eq(1))),
+        )
         .filter(document_assets::document_version_id.eq_any(&version_ids))
         .order((
             document_assets::document_version_id.asc(),
             document_assets::created_at.asc(),
         ))
+        .select((
+            document_assets::all_columns,
+            document_asset_objects::all_columns.nullable(),
+        ))
         .load(&mut conn)?;
 
     let mut assets_by_version: HashMap<Uuid, Vec<DocumentAssetResponse>> = HashMap::new();
-    for asset in assets {
+    for (asset, object) in assets {
         let version_id = asset.document_version_id;
-        let response = to_asset_response(asset, None);
+        let response = to_asset_response(asset, object.map(|o| o.metadata), None);
         assets_by_version
             .entry(version_id)
             .or_default()
@@ -1878,8 +1900,26 @@ fn to_version_response(version: DocumentVersion) -> DocumentVersionResponse {
     }
 }
 
-fn to_asset_response(asset: DocumentAsset, url: Option<String>) -> DocumentAssetResponse {
-    let metadata = asset.metadata.clone();
+fn merge_metadata(base: &Value, overlay: Option<&Value>) -> Value {
+    match (base, overlay) {
+        (Value::Object(base_obj), Some(Value::Object(overlay_obj))) => {
+            let mut merged = base_obj.clone();
+            for (key, value) in overlay_obj {
+                merged.insert(key.clone(), value.clone());
+            }
+            Value::Object(merged)
+        }
+        (_, Some(value)) => value.clone(),
+        (value, None) => value.clone(),
+    }
+}
+
+fn to_asset_response(
+    asset: DocumentAsset,
+    object_metadata: Option<Value>,
+    url: Option<String>,
+) -> DocumentAssetResponse {
+    let metadata = merge_metadata(&asset.metadata, object_metadata.as_ref());
     DocumentAssetResponse {
         id: asset.id,
         asset_type: asset.asset_type,
@@ -1931,15 +1971,24 @@ async fn load_asset_responses(
     version_id: Uuid,
 ) -> AppResult<Vec<DocumentAssetResponse>> {
     let mut conn = state.db()?;
-    let assets: Vec<DocumentAsset> = document_assets::table
+    let assets: Vec<(DocumentAsset, Option<DocumentAssetObject>)> = document_assets::table
+        .left_outer_join(
+            document_asset_objects::table.on(document_asset_objects::asset_id
+                .eq(document_assets::id)
+                .and(document_asset_objects::ordinal.eq(1))),
+        )
         .filter(document_assets::document_version_id.eq(version_id))
         .order(document_assets::created_at.asc())
+        .select((
+            document_assets::all_columns,
+            document_asset_objects::all_columns.nullable(),
+        ))
         .load(&mut conn)?;
     drop(conn);
 
     Ok(assets
         .into_iter()
-        .map(|asset| to_asset_response(asset, None))
+        .map(|(asset, object)| to_asset_response(asset, object.map(|o| o.metadata), None))
         .collect())
 }
 

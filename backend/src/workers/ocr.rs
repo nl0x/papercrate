@@ -19,8 +19,11 @@ use uuid::Uuid;
 
 use crate::{
     jobs::{enqueue_job, JOB_GENERATE_OCR_TEXT, JOB_INDEX_DOCUMENT_TEXT},
-    models::{Document, DocumentAsset, DocumentVersion, NewDocumentAsset},
-    schema::{document_assets, document_versions, documents},
+    models::{
+        Document, DocumentAsset, DocumentAssetObject, DocumentVersion, NewDocumentAsset,
+        NewDocumentAssetObject,
+    },
+    schema::{document_asset_objects, document_assets, document_versions, documents},
     state::AppState,
 };
 
@@ -123,11 +126,15 @@ impl JobHandler for GenerateOcrTextJob {
             };
         };
 
-        let asset_id = context
-            .existing_asset
-            .as_ref()
-            .map(|asset| asset.id)
-            .unwrap_or_else(Uuid::new_v4);
+        if context.existing_asset.is_some() {
+            for object in &context.existing_objects {
+                if let Err(err) = state.storage.delete_object(&object.s3_key).await {
+                    warn!(job_id = %job.id, error = %err, s3_key = %object.s3_key, "failed to delete existing ocr asset object");
+                }
+            }
+        }
+
+        let asset_id = Uuid::new_v4();
 
         let s3_key = format!(
             "documents/{}/v{}/assets/{}/{}",
@@ -193,6 +200,7 @@ struct OcrContext {
     document: Document,
     version: DocumentVersion,
     existing_asset: Option<DocumentAsset>,
+    existing_objects: Vec<DocumentAssetObject>,
     skip: bool,
 }
 
@@ -218,29 +226,41 @@ fn load_ocr_context(state: Arc<AppState>, payload: &OcrPayload) -> Result<OcrCon
         .first(&mut conn)
         .map_err(|err| format!("{err:?}"))?;
 
-    let existing: Option<DocumentAsset> = document_assets::table
+    let existing_asset: Option<DocumentAsset> = document_assets::table
         .filter(document_assets::document_version_id.eq(payload.document_version_id))
         .filter(document_assets::asset_type.eq(OCR_TEXT_ASSET_TYPE))
         .first(&mut conn)
         .optional()
         .map_err(|err| format!("{err:?}"))?;
 
+    let existing_objects: Vec<DocumentAssetObject> = if let Some(asset) = &existing_asset {
+        document_asset_objects::table
+            .filter(document_asset_objects::asset_id.eq(asset.id))
+            .order(document_asset_objects::ordinal.asc())
+            .load(&mut conn)
+            .map_err(|err| format!("{err:?}"))?
+    } else {
+        Vec::new()
+    };
+
     let is_pdf = document_is_pdf(&document);
     if !is_pdf {
         return Ok(OcrContext {
             document,
             version,
-            existing_asset: existing,
+            existing_asset: existing_asset,
+            existing_objects,
             skip: true,
         });
     }
 
-    let skip = existing.is_some() && !payload.force;
+    let skip = existing_asset.is_some() && !payload.force;
 
     Ok(OcrContext {
         document,
         version,
-        existing_asset: existing,
+        existing_asset,
+        existing_objects,
         skip,
     })
 }
@@ -371,16 +391,22 @@ fn persist_ocr_metadata(
 ) -> Result<(), String> {
     let mut conn = state.db().map_err(|err| format!("{err:?}"))?;
 
+    if let Some(existing_asset) = &context.existing_asset {
+        diesel::delete(document_assets::table.filter(document_assets::id.eq(existing_asset.id)))
+            .execute(&mut conn)
+            .map_err(|err| format!("{err:?}"))?;
+    }
+
     let new_asset = NewDocumentAsset {
         id: asset_id,
         document_version_id: context.version.id,
         asset_type: OCR_TEXT_ASSET_TYPE.to_string(),
-        s3_key: s3_key.to_string(),
         mime_type: "text/plain".to_string(),
         metadata: json!({
             "generated_at": Utc::now().to_rfc3339(),
             "source": source,
         }),
+        cardinality: Some(1),
     };
 
     diesel::insert_into(document_assets::table)
@@ -391,9 +417,41 @@ fn persist_ocr_metadata(
         ))
         .do_update()
         .set((
-            document_assets::s3_key.eq(excluded(document_assets::s3_key)),
             document_assets::mime_type.eq(excluded(document_assets::mime_type)),
             document_assets::metadata.eq(excluded(document_assets::metadata)),
+            document_assets::cardinality.eq(excluded(document_assets::cardinality)),
+        ))
+        .execute(&mut conn)
+        .map_err(|err| format!("{err:?}"))?;
+
+    let existing_object_id: Option<Uuid> = document_asset_objects::table
+        .filter(document_asset_objects::asset_id.eq(asset_id))
+        .filter(document_asset_objects::ordinal.eq(1))
+        .select(document_asset_objects::id)
+        .first(&mut conn)
+        .optional()
+        .map_err(|err| format!("{err:?}"))?;
+
+    let object_id = existing_object_id.unwrap_or_else(Uuid::new_v4);
+
+    let new_object = NewDocumentAssetObject {
+        id: object_id,
+        asset_id,
+        ordinal: 1,
+        s3_key: s3_key.to_string(),
+        metadata: json!({}),
+    };
+
+    diesel::insert_into(document_asset_objects::table)
+        .values(&new_object)
+        .on_conflict((
+            document_asset_objects::asset_id,
+            document_asset_objects::ordinal,
+        ))
+        .do_update()
+        .set((
+            document_asset_objects::s3_key.eq(excluded(document_asset_objects::s3_key)),
+            document_asset_objects::metadata.eq(excluded(document_asset_objects::metadata)),
         ))
         .execute(&mut conn)
         .map_err(|err| format!("{err:?}"))?;

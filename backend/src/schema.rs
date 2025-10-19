@@ -12,14 +12,24 @@ diesel::table! {
 }
 
 diesel::table! {
+    document_asset_objects (id) {
+        id -> Uuid,
+        asset_id -> Uuid,
+        ordinal -> Int4,
+        s3_key -> Text,
+        metadata -> Jsonb,
+    }
+}
+
+diesel::table! {
     document_assets (id) {
         id -> Uuid,
         document_version_id -> Uuid,
         asset_type -> Text,
-        s3_key -> Text,
         mime_type -> Text,
         metadata -> Jsonb,
         created_at -> Timestamptz,
+        cardinality -> Nullable<Int4>,
     }
 }
 
@@ -143,6 +153,7 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(document_asset_objects -> document_assets (asset_id));
 diesel::joinable!(document_assets -> document_versions (document_version_id));
 diesel::joinable!(document_correspondents -> correspondents (correspondent_id));
 diesel::joinable!(document_correspondents -> documents (document_id));
@@ -155,6 +166,7 @@ diesel::joinable!(refresh_tokens -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     correspondents,
+    document_asset_objects,
     document_assets,
     document_correspondents,
     document_tags,

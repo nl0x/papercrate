@@ -13,8 +13,11 @@ use uuid::Uuid;
 
 use crate::{
     jobs::JOB_GENERATE_THUMBNAILS,
-    models::{Document, DocumentAsset, DocumentVersion, NewDocumentAsset},
-    schema::{document_assets, document_versions, documents},
+    models::{
+        Document, DocumentAsset, DocumentAssetObject, DocumentVersion, NewDocumentAsset,
+        NewDocumentAssetObject,
+    },
+    schema::{document_asset_objects, document_assets, document_versions, documents},
     state::AppState,
 };
 
@@ -142,11 +145,33 @@ impl JobHandler for GenerateThumbnailsJob {
             }
         }
 
-        let thumbnail_asset_id = initial
-            .existing_thumbnail
-            .as_ref()
-            .map(|asset| asset.id)
-            .unwrap_or_else(Uuid::new_v4);
+        if initial.existing_preview.is_some() {
+            for object in &initial.existing_preview_objects {
+                if let Err(err) = state.storage.delete_object(&object.s3_key).await {
+                    warn!(
+                        job_id = %job.id,
+                        error = %err,
+                        s3_key = %object.s3_key,
+                        "failed to delete existing preview object"
+                    );
+                }
+            }
+        }
+
+        if initial.existing_thumbnail.is_some() {
+            for object in &initial.existing_thumbnail_objects {
+                if let Err(err) = state.storage.delete_object(&object.s3_key).await {
+                    warn!(
+                        job_id = %job.id,
+                        error = %err,
+                        s3_key = %object.s3_key,
+                        "failed to delete existing thumbnail object"
+                    );
+                }
+            }
+        }
+
+        let thumbnail_asset_id = Uuid::new_v4();
         let thumbnail_s3_key = format!(
             "documents/{}/v{}/assets/{}/{}",
             initial.document.id,
@@ -155,11 +180,7 @@ impl JobHandler for GenerateThumbnailsJob {
             thumbnail_asset_id
         );
 
-        let preview_asset_id = initial
-            .existing_preview
-            .as_ref()
-            .map(|asset| asset.id)
-            .unwrap_or_else(Uuid::new_v4);
+        let preview_asset_id = Uuid::new_v4();
         let preview_s3_key = format!(
             "documents/{}/v{}/assets/{}/{}",
             initial.document.id,
@@ -250,7 +271,9 @@ struct ThumbnailContext {
     document: Document,
     version: DocumentVersion,
     existing_thumbnail: Option<DocumentAsset>,
+    existing_thumbnail_objects: Vec<DocumentAssetObject>,
     existing_preview: Option<DocumentAsset>,
+    existing_preview_objects: Vec<DocumentAssetObject>,
     skip: bool,
 }
 
@@ -303,11 +326,27 @@ fn load_thumbnail_context(
         .map_err(|err| format!("{err:?}"))?;
 
     let mut existing_thumbnail = None;
+    let mut existing_thumbnail_objects: Vec<DocumentAssetObject> = Vec::new();
     let mut existing_preview = None;
+    let mut existing_preview_objects: Vec<DocumentAssetObject> = Vec::new();
     for asset in existing_assets {
         match asset.asset_type.as_str() {
-            THUMBNAIL_ASSET_TYPE => existing_thumbnail = Some(asset),
-            PREVIEW_ASSET_TYPE => existing_preview = Some(asset),
+            THUMBNAIL_ASSET_TYPE => {
+                existing_thumbnail_objects = document_asset_objects::table
+                    .filter(document_asset_objects::asset_id.eq(asset.id))
+                    .order(document_asset_objects::ordinal.asc())
+                    .load(&mut conn)
+                    .map_err(|err| format!("{err:?}"))?;
+                existing_thumbnail = Some(asset);
+            }
+            PREVIEW_ASSET_TYPE => {
+                existing_preview_objects = document_asset_objects::table
+                    .filter(document_asset_objects::asset_id.eq(asset.id))
+                    .order(document_asset_objects::ordinal.asc())
+                    .load(&mut conn)
+                    .map_err(|err| format!("{err:?}"))?;
+                existing_preview = Some(asset);
+            }
             _ => {}
         }
     }
@@ -323,7 +362,9 @@ fn load_thumbnail_context(
         document,
         version,
         existing_thumbnail,
+        existing_thumbnail_objects,
         existing_preview,
+        existing_preview_objects,
         skip,
     })
 }
@@ -462,18 +503,30 @@ fn persist_assets_metadata(
 ) -> Result<(), String> {
     let mut conn = state.db().map_err(|err| format!("{err:?}"))?;
 
+    if let Some(existing_preview) = &context.existing_preview {
+        diesel::delete(document_assets::table.filter(document_assets::id.eq(existing_preview.id)))
+            .execute(&mut conn)
+            .map_err(|err| format!("{err:?}"))?;
+    }
+
+    if let Some(existing_thumbnail) = &context.existing_thumbnail {
+        diesel::delete(
+            document_assets::table.filter(document_assets::id.eq(existing_thumbnail.id)),
+        )
+        .execute(&mut conn)
+        .map_err(|err| format!("{err:?}"))?;
+    }
+
     for asset in assets {
         let new_asset = NewDocumentAsset {
             id: asset.asset_id,
             document_version_id: context.version.id,
             asset_type: asset.asset_type.to_string(),
-            s3_key: asset.s3_key.to_string(),
             mime_type: "image/png".to_string(),
             metadata: json!({
                 "generated_at": Utc::now().to_rfc3339(),
-                "width": asset.generated.width,
-                "height": asset.generated.height,
             }),
+            cardinality: Some(1),
         };
 
         diesel::insert_into(document_assets::table)
@@ -484,9 +537,51 @@ fn persist_assets_metadata(
             ))
             .do_update()
             .set((
-                document_assets::s3_key.eq(excluded(document_assets::s3_key)),
                 document_assets::mime_type.eq(excluded(document_assets::mime_type)),
                 document_assets::metadata.eq(excluded(document_assets::metadata)),
+                document_assets::cardinality.eq(excluded(document_assets::cardinality)),
+            ))
+            .execute(&mut conn)
+            .map_err(|err| format!("{err:?}"))?;
+
+        let existing_object_id: Option<Uuid> = document_asset_objects::table
+            .filter(document_asset_objects::asset_id.eq(asset.asset_id))
+            .filter(document_asset_objects::ordinal.eq(1))
+            .select(document_asset_objects::id)
+            .first(&mut conn)
+            .optional()
+            .map_err(|err| format!("{err:?}"))?;
+
+        let object_id = existing_object_id.unwrap_or_else(Uuid::new_v4);
+
+        let mut metadata_map = Map::new();
+        if let Some(width) = asset.generated.width {
+            metadata_map.insert("width".to_string(), Value::from(width));
+        }
+        if let Some(height) = asset.generated.height {
+            metadata_map.insert("height".to_string(), Value::from(height));
+        }
+
+        let object_metadata = Value::Object(metadata_map);
+
+        let new_object = NewDocumentAssetObject {
+            id: object_id,
+            asset_id: asset.asset_id,
+            ordinal: 1,
+            s3_key: asset.s3_key.to_string(),
+            metadata: object_metadata,
+        };
+
+        diesel::insert_into(document_asset_objects::table)
+            .values(&new_object)
+            .on_conflict((
+                document_asset_objects::asset_id,
+                document_asset_objects::ordinal,
+            ))
+            .do_update()
+            .set((
+                document_asset_objects::s3_key.eq(excluded(document_asset_objects::s3_key)),
+                document_asset_objects::metadata.eq(excluded(document_asset_objects::metadata)),
             ))
             .execute(&mut conn)
             .map_err(|err| format!("{err:?}"))?;

@@ -109,10 +109,10 @@ pub struct DocumentAsset {
     pub id: Uuid,
     pub document_version_id: Uuid,
     pub asset_type: String,
-    pub s3_key: String,
     pub mime_type: String,
     pub metadata: serde_json::Value,
     pub created_at: NaiveDateTime,
+    pub cardinality: Option<i32>,
 }
 
 #[derive(Debug, Insertable)]
@@ -121,8 +121,29 @@ pub struct NewDocumentAsset {
     pub id: Uuid,
     pub document_version_id: Uuid,
     pub asset_type: String,
-    pub s3_key: String,
     pub mime_type: String,
+    pub metadata: serde_json::Value,
+    pub cardinality: Option<i32>,
+}
+
+#[derive(Debug, Clone, Queryable, Identifiable, Associations)]
+#[diesel(table_name = document_asset_objects)]
+#[diesel(belongs_to(DocumentAsset, foreign_key = asset_id))]
+pub struct DocumentAssetObject {
+    pub id: Uuid,
+    pub asset_id: Uuid,
+    pub ordinal: i32,
+    pub s3_key: String,
+    pub metadata: serde_json::Value,
+}
+
+#[derive(Debug, Insertable)]
+#[diesel(table_name = document_asset_objects)]
+pub struct NewDocumentAssetObject {
+    pub id: Uuid,
+    pub asset_id: Uuid,
+    pub ordinal: i32,
+    pub s3_key: String,
     pub metadata: serde_json::Value,
 }
 

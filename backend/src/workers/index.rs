@@ -12,8 +12,8 @@ use uuid::Uuid;
 
 use crate::{
     jobs::JOB_INDEX_DOCUMENT_TEXT,
-    models::{Document, DocumentAsset, DocumentVersion},
-    schema::{document_assets, document_versions, documents},
+    models::{Document, DocumentVersion},
+    schema::{document_asset_objects, document_assets, document_versions, documents},
     state::AppState,
 };
 
@@ -87,15 +87,15 @@ impl JobHandler for IndexDocumentTextJob {
             }
         };
 
-        if context.text_asset.is_none() {
+        if context.text_s3_key.is_none() {
             warn!(job_id = %job.id, "missing OCR text asset; failing indexing job");
             return JobExecution::Failed {
                 error: "missing OCR text asset".into(),
             };
         }
 
-        let asset = context.text_asset.unwrap();
-        let text = match state.storage.get_object(&asset.s3_key).await {
+        let s3_key = context.text_s3_key.unwrap();
+        let text = match state.storage.get_object(&s3_key).await {
             Ok(bytes) => match String::from_utf8(bytes) {
                 Ok(text) => text,
                 Err(err) => {
@@ -169,7 +169,7 @@ impl JobHandler for IndexDocumentTextJob {
 struct IndexContext {
     document: Document,
     version: DocumentVersion,
-    text_asset: Option<DocumentAsset>,
+    text_s3_key: Option<String>,
 }
 
 fn load_context(state: Arc<AppState>, payload: &IndexPayload) -> Result<IndexContext, String> {
@@ -189,9 +189,14 @@ fn load_context(state: Arc<AppState>, payload: &IndexPayload) -> Result<IndexCon
         .first(&mut conn)
         .map_err(|err| format!("{err:?}"))?;
 
-    let text_asset: Option<DocumentAsset> = document_assets::table
+    let text_s3_key: Option<String> = document_asset_objects::table
+        .inner_join(
+            document_assets::table.on(document_asset_objects::asset_id.eq(document_assets::id)),
+        )
         .filter(document_assets::document_version_id.eq(payload.document_version_id))
         .filter(document_assets::asset_type.eq(OCR_TEXT_ASSET_TYPE))
+        .filter(document_asset_objects::ordinal.eq(1))
+        .select(document_asset_objects::s3_key)
         .first(&mut conn)
         .optional()
         .map_err(|err| format!("{err:?}"))?;
@@ -199,6 +204,6 @@ fn load_context(state: Arc<AppState>, payload: &IndexPayload) -> Result<IndexCon
     Ok(IndexContext {
         document,
         version,
-        text_asset,
+        text_s3_key,
     })
 }
