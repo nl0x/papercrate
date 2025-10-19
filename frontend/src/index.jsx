@@ -3300,13 +3300,38 @@ const AppLayout = () => {
   );
 
   const handleDocumentTagAttach = useCallback(
-    async ({ documentId, tagId }) => {
+    async ({ documentId, tagId, tag: tagData = null }) => {
       if (!documentId || !tagId) {
         return false;
       }
 
+      const resolveTagForCache = () => {
+        const lookupTag = tagLookupById.get(tagId);
+        const source = lookupTag || tagData;
+        if (!source) {
+          return { id: tagId, label: 'Tag', color: null };
+        }
+        return {
+          id: source.id ?? tagId,
+          label: source.label || source.name || 'Tag',
+          color: Object.prototype.hasOwnProperty.call(source, 'color')
+            ? source.color
+            : null,
+        };
+      };
+
       try {
         await api.post(`/documents/${documentId}/tags`, { tag_ids: [tagId] });
+        updateDocumentCaches(documentId, (doc) => {
+          if (!doc) {
+            return doc;
+          }
+          const currentTags = Array.isArray(doc.tags) ? doc.tags : [];
+          if (currentTags.some((existing) => existing?.id === tagId)) {
+            return doc;
+          }
+          return { ...doc, tags: [...currentTags, resolveTagForCache()] };
+        });
         setStatusMessage('Tag assigned.', 'success');
         await refreshCurrentFolder();
         return true;
@@ -3316,7 +3341,14 @@ const AppLayout = () => {
         return false;
       }
     },
-    [api, refreshCurrentFolder, notifyApiError, setStatusMessage],
+    [
+      api,
+      refreshCurrentFolder,
+      notifyApiError,
+      setStatusMessage,
+      updateDocumentCaches,
+      tagLookupById,
+    ],
   );
 
   const handleDocumentTagDrop = useCallback(
@@ -3329,7 +3361,7 @@ const AppLayout = () => {
         return;
       }
 
-      const attached = await handleDocumentTagAttach({ documentId, tagId: tag.id });
+      const attached = await handleDocumentTagAttach({ documentId, tagId: tag.id, tag });
       if (!attached) {
         return;
       }
@@ -3794,14 +3826,14 @@ const AppLayout = () => {
       return TAG_MIME_TYPES.some((type) => Array.from(types).includes(type));
     };
 
-    const isDocumentRowTarget = (target) =>
-      target instanceof Element ? Boolean(target.closest('tr.document')) : false;
+    const isDocumentDropTarget = (target) =>
+      target instanceof Element ? Boolean(target.closest('[data-doc-id]')) : false;
 
     const handleTagDragOver = (event) => {
       if (!isTagTransfer(event)) {
         return;
       }
-      if (isDocumentRowTarget(event.target)) {
+      if (isDocumentDropTarget(event.target)) {
         setTagRemovalCursor(false);
         return;
       }
@@ -3816,7 +3848,7 @@ const AppLayout = () => {
       }
       const related = event.relatedTarget;
       if (related instanceof Element && host.contains(related)) {
-        if (isDocumentRowTarget(related)) {
+        if (isDocumentDropTarget(related)) {
           setTagRemovalCursor(false);
         }
         return;
@@ -3829,7 +3861,7 @@ const AppLayout = () => {
         return;
       }
       setTagRemovalCursor(false);
-      if (isDocumentRowTarget(event.target) || event.defaultPrevented) {
+      if (isDocumentDropTarget(event.target) || event.defaultPrevented) {
         return;
       }
       event.preventDefault();
@@ -4415,13 +4447,11 @@ const AppLayout = () => {
       onRefresh: refreshCurrentFolder,
       onDocumentOpen: openDocumentPreview,
       resolveThumbnailUrl: resolveThumbnailUrlForDoc,
-      availableTags: tags,
-      onCreateTag: handleTagCreate,
       onAssignTagToDocument: handleDocumentTagAttach,
       onRemoveTagFromDocument: handleTagRemove,
       ensureAssetUrl,
       getDocumentAsset,
-      prepareTagPayload: buildTagPayload,
+      activeTagIds: activeTagFilters,
     }),
     [
       documents,
@@ -4432,13 +4462,11 @@ const AppLayout = () => {
       refreshCurrentFolder,
       openDocumentPreview,
       resolveThumbnailUrlForDoc,
-      tags,
-      handleTagCreate,
       handleDocumentTagAttach,
       handleTagRemove,
       ensureAssetUrl,
       getDocumentAsset,
-      buildTagPayload,
+      activeTagFilters,
     ],
   );
 
@@ -4685,9 +4713,9 @@ const DocumentsRoute = () => {
 
   if (workspaceMode === 'skeuo') {
     return (
-      <main className="skeuo-main">
+      <DocumentsLayout sidebarProps={sidebarProps}>
         <SkeuomorphicWorkspace {...skeuoWorkspaceProps} />
-      </main>
+      </DocumentsLayout>
     );
   }
 

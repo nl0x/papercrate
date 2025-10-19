@@ -430,6 +430,7 @@ const DocumentsTable = ({
                     className={cardClasses.join(' ')}
                     role="listitem"
                     id={`document-card-${doc.id}`}
+                    data-doc-id={doc.id}
                     onClick={(event) => onDocumentRowClick(doc.id, event)}
                     onDoubleClick={() => onDocumentOpen(doc.id)}
                     draggable
@@ -646,6 +647,7 @@ const DocumentsTable = ({
                       key={doc.id}
                       className={rowClasses.join(' ')}
                       id={`document-row-${doc.id}`}
+                      data-doc-id={doc.id}
                       onClick={(event) => onDocumentRowClick(doc.id, event)}
                       onDoubleClick={() => onDocumentOpen(doc.id)}
                       draggable

@@ -7,7 +7,7 @@ import React, {
   useState,
 } from 'react';
 import { resolveDocumentAssetUrl } from './asset_manager';
-import { generateRandomTagColor, getReadableTextColor } from './utils/colors';
+import { getReadableTextColor } from './utils/colors';
 import './skeuomorphic_ws.css';
 
 const ITEM_WIDTH = 220;
@@ -31,7 +31,6 @@ const ZOOM_MIN_SCALE = 1.05;
 const ZOOM_MAX_SCALE = 5;
 const TAG_REMOVE_DISTANCE = 160;
 
-const DRAG_PREVIEW_KEY = Symbol('dragPreview');
 const DEBUG_DRAG = false;
 const DEBUG_FOCUS = true;
 const DEBUG_DROP = true;
@@ -432,20 +431,17 @@ const SkeuomorphicWorkspace = ({
   onRefresh,
   onDocumentOpen,
   resolveThumbnailUrl,
-  availableTags = [],
-  onCreateTag = null,
   onAssignTagToDocument = null,
   onRemoveTagFromDocument = null,
   ensureAssetUrl = null,
   getDocumentAsset = () => null,
-  prepareTagPayload = null,
+  activeTagIds = [],
 }) => {
   const items = useMemo(() => (searchResults ? searchResults : documents), [documents, searchResults]);
   const showingSearchResults = searchResults !== null;
 
 
   const containerRef = useRef(null);
-  const tagShelfRef = useRef(null);
   const layoutRef = useRef(new Map());
   const itemRefs = useRef(new Map());
   const zCounterRef = useRef(10);
@@ -453,17 +449,27 @@ const SkeuomorphicWorkspace = ({
   const [layoutSnapshot, setLayoutSnapshot] = useState(() => new Map());
 
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
-  const [tagShelfWidth, setTagShelfWidth] = useState(0);
   const [draggingId, setDraggingId] = useState(null);
   const [zoomedId, setZoomedId] = useState(null);
   const [tagDropTargetId, setTagDropTargetId] = useState(null);
   const [pendingTagDocId, setPendingTagDocId] = useState(null);
   const [pendingRemovalTag, setPendingRemovalTag] = useState(null);
-  const [activeShelfTagId, setActiveShelfTagId] = useState(null);
   const draggingTagRef = useRef(null);
   const pendingDocTagDragRef = useRef(null);
   const docSizeMapRef = useRef(new Map());
   const removalCursorActiveRef = useRef(false);
+  const activeTagSet = useMemo(() => {
+    if (!Array.isArray(activeTagIds) || activeTagIds.length === 0) {
+      return new Set();
+    }
+    const set = new Set();
+    activeTagIds.forEach((id) => {
+      if (id != null) {
+        set.add(String(id));
+      }
+    });
+    return set;
+  }, [activeTagIds]);
 
   const resolvePreviewAsset = useCallback(
     (doc) => {
@@ -591,71 +597,10 @@ const SkeuomorphicWorkspace = ({
     );
   }, []);
 
-  const handleShelfTagDragStart = useCallback((event, tag) => {
-    if (!tag) return;
-    try {
-      event.dataTransfer.effectAllowed = 'copy';
-      const payload = JSON.stringify({ id: tag.id, label: tag.label });
-      event.dataTransfer.setData('application/x-papercrate-tag', payload);
-      event.dataTransfer.setData('text/papercrate-tag', payload);
-      event.dataTransfer.setData('text/plain', tag.label || 'Tag');
-    } catch (error) {
-      console.warn('Failed to initiate tag drag', error);
-    }
-    const node = event.currentTarget;
-    const hideNode = () => {
-      if (node instanceof HTMLElement) {
-        node.classList.add('is-drag-hidden');
-      }
-    };
-    if (node instanceof HTMLElement) {
-      if (node[DRAG_PREVIEW_KEY]) {
-        cleanupPreview(node[DRAG_PREVIEW_KEY]);
-        delete node[DRAG_PREVIEW_KEY];
-      }
-      const preview = createDragPreview(node, event.clientX, event.clientY);
-      if (preview && event.dataTransfer) {
-        try {
-          event.dataTransfer.setDragImage(preview.clone, preview.offsetX, preview.offsetY);
-          node[DRAG_PREVIEW_KEY] = preview.clone;
-        } catch (
-          // eslint-disable-next-line no-empty
-          error
-        ) {}
-      }
-    }
-    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-      window.requestAnimationFrame(hideNode);
-    } else {
-      setTimeout(hideNode, 0);
-    }
-  }, []);
-
   const handleTagDragEnd = useCallback(() => {
     updateRemovalCursor(false);
     setTagDropTargetId(null);
   }, [updateRemovalCursor]);
-
-  const handleShelfTagDragEndWithReset = useCallback((event) => {
-    if (event?.currentTarget instanceof HTMLElement) {
-      const target = event.currentTarget;
-      const showNode = () => {
-        if (target instanceof HTMLElement) {
-          target.classList.remove('is-drag-hidden');
-          const stored = target[DRAG_PREVIEW_KEY];
-          cleanupPreview(stored);
-          delete target[DRAG_PREVIEW_KEY];
-        }
-      };
-      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-        window.requestAnimationFrame(showNode);
-      } else {
-        setTimeout(showNode, 0);
-      }
-    }
-    handleTagDragEnd();
-    queueFocusCanvas();
-  }, [handleTagDragEnd, queueFocusCanvas]);
 
   const ensureDocumentSize = useCallback((doc) => {
     const key = resolveSizeKey(doc);
@@ -720,17 +665,6 @@ const SkeuomorphicWorkspace = ({
   useEffect(() => {
     docSizeMapRef.current = new Map();
   }, [items]);
-
-  useEffect(() => {
-    if (!activeShelfTagId) {
-      return;
-    }
-    const stillExists = availableTags.some((tag) => resolveTagKey(tag) === activeShelfTagId);
-    if (!stillExists) {
-      setActiveShelfTagId(null);
-    }
-  }, [activeShelfTagId, availableTags]);
-
 
   const resolveZoomMetrics = useCallback(
     (doc, cardWidth, cardHeight) => {
@@ -820,30 +754,6 @@ const SkeuomorphicWorkspace = ({
     },
     [resolvePreviewDimensions],
   );
-
-  useLayoutEffect(() => {
-    const shelfNode = tagShelfRef.current;
-    if (!shelfNode || !availableTags.length) {
-      setTagShelfWidth(0);
-      return () => {};
-    }
-
-    const measure = () => {
-      const rect = shelfNode.getBoundingClientRect();
-      setTagShelfWidth(Math.ceil(rect.width));
-    };
-
-    measure();
-
-    if (typeof ResizeObserver === 'undefined') {
-      window.addEventListener('resize', measure);
-      return () => window.removeEventListener('resize', measure);
-    }
-
-    const observer = new ResizeObserver(() => measure());
-    observer.observe(shelfNode);
-    return () => observer.disconnect();
-  }, [availableTags.length]);
 
   const syncLayoutSnapshot = useCallback(() => {
     setLayoutSnapshot(new Map(layoutRef.current));
@@ -950,7 +860,7 @@ const SkeuomorphicWorkspace = ({
             startZ: maxZ,
             rotationRange: ROTATION_RANGE,
             minSpacing: 48,
-            shelfWidth: tagShelfWidth > 0 ? tagShelfWidth + CANVAS_PADDING : 0,
+            shelfWidth: 0,
           },
         );
         generatedLayout.forEach((entry, docId) => {
@@ -971,7 +881,6 @@ const SkeuomorphicWorkspace = ({
     canvasSize.height,
     ensureDocumentSize,
     syncLayoutSnapshot,
-    tagShelfWidth,
   ]);
 
   useEffect(() => {
@@ -1150,7 +1059,7 @@ const SkeuomorphicWorkspace = ({
 
       setPendingTagDocId(doc.id);
       try {
-        await onAssignTagToDocument({ documentId: doc.id, tagId });
+        await onAssignTagToDocument({ documentId: doc.id, tagId, tag: payload });
         markActiveTagDropHandled(tagId, sourceDocId);
         if (DEBUG_DROP) {
           console.log('[skeuo] handleTagDropOnDoc: assigned tag', tagId, 'to doc', doc.id);
@@ -1504,7 +1413,6 @@ const SkeuomorphicWorkspace = ({
       <div
         className="skeuo-canvas"
         ref={containerRef}
-        data-active-tag={activeShelfTagId || undefined}
         onDragOver={handleCanvasDragOver}
         onDragLeave={handleCanvasDragLeave}
         onDrop={handleCanvasDrop}
@@ -1572,7 +1480,7 @@ const SkeuomorphicWorkspace = ({
               .map((tag) => resolveTagKey(tag))
               .filter(Boolean);
             const matchesFilter =
-              !activeShelfTagId || docTagKeys.includes(activeShelfTagId);
+              activeTagSet.size === 0 || docTagKeys.some((key) => activeTagSet.has(key));
             const dropActive = tagDropTargetId === doc.id;
             const dropPending = pendingTagDocId === doc.id;
             const itemClasses = ['skeuo-item'];
@@ -1673,81 +1581,6 @@ const SkeuomorphicWorkspace = ({
               </div>
             );
           })
-        )}
-        {(availableTags.length > 0 || onCreateTag) && (
-          <div
-            className="skeuo-tag-shelf"
-            aria-label="Available tags"
-            ref={tagShelfRef}
-          >
-            {availableTags.map((tag) => {
-              const colorValue = normalizeColor(tag.color);
-              const foreground = getContrastingTextColor(colorValue || '#1b1f24');
-              const tagStyle = colorValue
-                ? { backgroundColor: colorValue, color: foreground }
-                : undefined;
-              const tagKey = resolveTagKey(tag);
-              const isSelected = activeShelfTagId === tagKey;
-              const shelfTagClasses = ['skeuo-tag'];
-              if (isSelected) {
-                shelfTagClasses.push('is-active');
-              } else if (activeShelfTagId) {
-                shelfTagClasses.push('is-inactive');
-              }
-              return (
-                <div
-                  key={tag.id || tag.label}
-                  className={shelfTagClasses.join(' ')}
-                  style={tagStyle}
-                  title={tag.label}
-                  draggable
-                  data-tag-id={tagKey || undefined}
-                  onDragStart={(event) => handleShelfTagDragStart(event, tag)}
-                  onDragEnd={handleShelfTagDragEndWithReset}
-                  role="button"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    setActiveShelfTagId((current) => (current === tagKey ? null : tagKey));
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      setActiveShelfTagId((current) => (current === tagKey ? null : tagKey));
-                    }
-                  }}
-                >
-                  <span>{tag.label}</span>
-                </div>
-              );
-            })}
-            {typeof onCreateTag === 'function' && (
-              <button
-                type="button"
-                className="skeuo-tag-add"
-                aria-label="Add tag"
-                onClick={async () => {
-                  const labelInput = window.prompt('New tag name?');
-                  const label = labelInput ? labelInput.trim() : '';
-                  if (!label) {
-                    return;
-                  }
-                  try {
-                    const payload =
-                      typeof prepareTagPayload === 'function'
-                        ? prepareTagPayload({ label })
-                        : { label, color: generateRandomTagColor() };
-                    await onCreateTag(payload);
-                    setActiveShelfTagId(null);
-                  } catch (error) {
-                    console.error('Failed to create tag', error);
-                  }
-                }}
-                >
-                +
-              </button>
-            )}
-          </div>
         )}
       </div>
     </div>

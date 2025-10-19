@@ -749,7 +749,7 @@ button.icon-button.ghost:hover:not([disabled]) {
 }
 
 .column + .column {
-  border-left: 1px solid var(--border);
+  border-left: none;
   padding-left: 1.25rem;
 }
 
@@ -940,6 +940,7 @@ button.icon-button.ghost:hover:not([disabled]) {
   overflow-y: auto;
   padding: 1.25rem;
   color: var(--sidebar-fg);
+  border-right: 1px solid var(--border);
 }
 
 .sidebar-section:first-of-type,
