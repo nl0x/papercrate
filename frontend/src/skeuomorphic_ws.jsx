@@ -210,6 +210,15 @@ const useDocumentDrag = ({
       if (!state || state.pointerId !== pointerId) {
         return;
       }
+      const capturedTarget = state.capturedTarget;
+      if (capturedTarget && typeof capturedTarget.releasePointerCapture === 'function') {
+        try {
+          capturedTarget.releasePointerCapture(pointerId);
+        } catch (
+          // eslint-disable-next-line no-empty
+          error
+        ) {}
+      }
       dragStateRef.current = null;
       setDraggingId((current) => (current === state.docId ? null : current));
       syncLayoutSnapshot();
@@ -246,6 +255,15 @@ const useDocumentDrag = ({
       }
 
       bringToFront(docId);
+      const capturedTarget = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+      if (capturedTarget && typeof capturedTarget.setPointerCapture === 'function') {
+        try {
+          capturedTarget.setPointerCapture(event.pointerId);
+        } catch (
+          // eslint-disable-next-line no-empty
+          error
+        ) {}
+      }
       dragStateRef.current = {
         docId,
         pointerId: event.pointerId,
@@ -259,6 +277,7 @@ const useDocumentDrag = ({
         width: docWidth,
         height: docHeight,
         scale: baseScale,
+        capturedTarget,
       };
       setDraggingId(docId);
     },
