@@ -1,10 +1,10 @@
 import React, {
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
-  useContext,
   useReducer,
 } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -28,11 +28,11 @@ import DetailPanel from './detail/DetailPanel';
 import TagsPanel from './tags/TagsPanel';
 import CorrespondentsPanel from './correspondents/CorrespondentsPanel';
 import { CORRESPONDENT_ROLES } from './constants/correspondents';
-import { DownloadIcon } from './ui/icons';
 import TagManager from './tag_manager';
-import { formatFileSize } from './utils/format';
 import Sidebar from './sidebar/Sidebar';
 import DocumentsTable from './documents/DocumentsTable';
+import { AppShellContext, useAppShell } from './appShellContext';
+import DocumentViewerRoute from './routes/DocumentViewerRoute';
 
 const runtimeApiBase =
   typeof window !== 'undefined' && window.__PAPERCRATE_API_BASE_URL
@@ -226,91 +226,6 @@ const LoginView = ({ onSubmit, status }) => (
 
 
 
-const PreviewWorkspace = ({
-  document,
-  previewEntry,
-  onClose,
-  onRegenerateThumbnails,
-}) => {
-  if (!document) {
-    return null;
-  }
-
-  const title = document.title || document.original_name || 'Document';
-  const mime = previewEntry?.contentType || document.content_type || 'application/pdf';
-  const downloadHref = document.current_version?.download_path
-    ? resolveApiPath(document.current_version.download_path)
-    : null;
-  const sizeBytes = Number(document.current_version?.size_bytes) || 0;
-  const sizeLabel = sizeBytes > 0 ? formatFileSize(sizeBytes) : null;
-  const metadata =
-    document.metadata && Object.keys(document.metadata).length > 0 ? document.metadata : null;
-
-  return (
-    <section className="preview-workspace">
-      <header className="preview-workspace__header">
-        <div className="preview-workspace__meta">
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => onClose(document.folder_id ?? 'root')}
-          >
-            ← Back
-          </button>
-          <div>
-            <h2>{title}</h2>
-            <span className="meta">
-              {document.content_type || mime}
-              {sizeLabel ? ` · ${sizeLabel}` : ''}
-            </span>
-          </div>
-        </div>
-        <div className="preview-workspace__actions">
-          <a
-            className="button-link with-icon"
-            href={downloadHref || '#'}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-disabled={!downloadHref}
-            onClick={(event) => {
-              if (!downloadHref) {
-                event.preventDefault();
-              }
-            }}
-          >
-            <DownloadIcon className="icon-inline" />
-            <span>Download</span>
-          </a>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => onRegenerateThumbnails(document.id)}
-          >
-            Re-run analysis
-          </button>
-        </div>
-      </header>
-      <div className="preview-workspace__body">
-        {!previewEntry?.url ? (
-          <div className="preview-workspace__message">Loading preview…</div>
-        ) : (
-          <iframe
-            src={previewEntry.url}
-            title={`Preview of ${title}`}
-            className="preview-workspace__object"
-          />
-        )}
-      </div>
-      {metadata && (
-        <section className="preview-workspace__metadata">
-          <h3>Metadata</h3>
-          <pre>{JSON.stringify(metadata, null, 2)}</pre>
-        </section>
-      )}
-    </section>
-  );
-};
-
 const DocumentsLayout = ({ sidebarProps, children }) => (
   <main className="documents-main">
     <Sidebar {...sidebarProps} />
@@ -318,19 +233,16 @@ const DocumentsLayout = ({ sidebarProps, children }) => (
   </main>
 );
 
-const AppShellContext = React.createContext(null);
-
 const AppLayout = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const appState = useAppState();
   const appDispatch = useAppDispatch();
   const folderMatch = matchPath('/documents/folder/:folderId', location.pathname);
-  const nestedDocMatch = matchPath('/documents/folder/:folderId/documents/:documentId', location.pathname);
-  const docMatch = nestedDocMatch || matchPath('/documents/:documentId', location.pathname);
-  const routeFolderId =
-    folderMatch?.params?.folderId || nestedDocMatch?.params?.folderId || null;
+  const docMatch = matchPath('/documents/:documentId', location.pathname);
+  const routeFolderId = folderMatch?.params?.folderId || null;
   const routeDocumentId = docMatch?.params?.documentId || null;
+  const previewDocumentId = routeDocumentId;
   const { status: appStatus, token } = appState;
   const [status, setStatus] = useState(null);
   const setStatusMessage = useCallback((message, variant = 'info') => {
@@ -475,8 +387,6 @@ const AppLayout = () => {
     folderName: DEFAULT_FOLDER_NAME,
   });
   const [activePreviewId, setActivePreviewId] = useState(routeDocumentId || null);
-  const [previewDocumentId, setPreviewDocumentId] = useState(null);
-  const [previewDocumentLoading, setPreviewDocumentLoading] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const shellRef = useRef(null);
   const assetManagerRef = useRef(null);
@@ -608,8 +518,6 @@ const AppLayout = () => {
     setActiveTagFilters([]);
     setDropOverlayState({ active: false, folderName: DEFAULT_FOLDER_NAME });
     setActivePreviewId(null);
-    setPreviewDocumentId(null);
-    setPreviewDocumentLoading(false);
     assetManager.reset();
     setPreviewEntries(() => new Map());
     previewInflightRef.current = new Map();
@@ -754,9 +662,6 @@ const AppLayout = () => {
 
   useEffect(() => {
     if (!selectedDocumentIds.length) {
-      if (activePreviewId !== null) {
-        setActivePreviewId(null);
-      }
       return;
     }
     if (!selectedDocumentIds.includes(activePreviewId)) {
@@ -3084,61 +2989,73 @@ const AppLayout = () => {
     [token, refreshCurrentFolder, notifyApiError, setStatusMessage],
   );
 
-  const openDocumentPreview = useCallback(
-    async (documentId, { replace = false, skipNavigate = false } = {}) => {
-      if (!documentId) return;
-      setPreviewDocumentId(documentId);
-      setPreviewDocumentLoading(true);
-      try {
+  const ensurePreviewData = useCallback(
+    async (documentId) => {
+      if (!documentId) return null;
+
+      const findInCache = () => {
         const pool = searchResults ?? documents;
-        const doc = pool.find((item) => item.id === documentId);
+        return pool.find((item) => item.id === documentId) || null;
+      };
+
+      let doc = findInCache();
+
+      if (!doc) {
+        const { data } = await api.get(`/documents/${documentId}`);
+        const hydratedDetail = assetManager.hydrateDetail(data);
+        const fetched = hydratedDetail?.document || data.document || data;
+        doc = fetched ? assetManager.hydrateDocument(fetched) : null;
         if (!doc) {
           throw new Error('Document metadata unavailable.');
         }
 
-        const currentVersion = doc.current_version || null;
-        const previewAsset = getAssetFromVersion(currentVersion, 'preview');
-        const thumbnailAsset = getAssetFromVersion(currentVersion, 'thumbnail');
-
-        const refreshAssetIfNeeded = async (asset) => {
-          if (!asset?.id) {
-            return;
+        setDocuments((prev) => {
+          if (prev.some((item) => item.id === doc.id)) {
+            return prev;
           }
-          const expiresAt = typeof asset.expiresAt === 'number' ? asset.expiresAt : null;
-          const shouldForce = Boolean(asset.url && expiresAt && expiresAt <= Date.now());
-          if (!asset.url || shouldForce) {
-            try {
-              await ensureAssetUrl(documentId, asset, { force: shouldForce || !asset.url });
-            } catch (
-              // eslint-disable-next-line no-empty
-              error
-            ) {}
-          }
-        };
-
-        await refreshAssetIfNeeded(previewAsset);
-        refreshAssetIfNeeded(thumbnailAsset);
-
-        await ensurePreviewUrl(documentId, { force: false });
-        setActivePreviewId(documentId);
-        if (!skipNavigate && navigate) {
-          navigate(`/documents/${documentId}`, { replace });
-        }
-      } catch (error) {
-        notifyApiError(error, 'Failed to open document preview.');
-        setPreviewDocumentId(null);
-      } finally {
-        setPreviewDocumentLoading(false);
+          return [doc, ...prev];
+        });
       }
+
+      const targetFolder = doc?.folder_id || selectedFolder || 'root';
+      if (targetFolder && targetFolder !== selectedFolder) {
+        await loadFolder(targetFolder, { showLoading: false, preserveSearch: isFilterActive });
+        doc = findInCache() || doc;
+      }
+
+      await ensurePreviewUrl(documentId, { force: false });
+      setActivePreviewId(documentId);
+      return doc;
     },
     [
-      documents,
       searchResults,
+      documents,
+      api,
+      assetManager,
+      setDocuments,
+      selectedFolder,
+      loadFolder,
+      isFilterActive,
       ensurePreviewUrl,
-      ensureAssetUrl,
-      navigate,
-      notifyApiError,
+      setActivePreviewId,
     ],
+  );
+
+  const openDocumentPreview = useCallback(
+    (documentId, { replace = false } = {}) => {
+      if (!documentId) return;
+      navigate(`/documents/${documentId}`, { replace });
+    },
+    [navigate],
+  );
+
+  const closeDocumentPreview = useCallback(
+    (folderId = null) => {
+      const targetId = folderId || selectedFolder || 'root';
+      const path = targetId === 'root' ? '/documents' : `/documents/folder/${targetId}`;
+      navigate(path, { replace: false });
+    },
+    [navigate, selectedFolder],
   );
 
   const handleDocumentListFocus = useCallback(() => {
@@ -3269,24 +3186,6 @@ const AppLayout = () => {
     ],
   );
 
-  const closeDocumentPreview = useCallback(
-    (folderId = null) => {
-      setPreviewDocumentId(null);
-      setPreviewDocumentLoading(false);
-
-      const targetId = folderId || selectedFolder || 'root';
-
-      if (!navigate) {
-        loadFolder(targetId, { showLoading: false, preserveSearch: isFilterActive });
-        return;
-      }
-
-      const path = targetId === 'root' ? '/documents' : `/documents/folder/${targetId}`;
-      navigate(path, { replace: false });
-    },
-    [navigate, selectedFolder, loadFolder, isFilterActive],
-  );
-
   useEffect(() => {
     if (!previewDocumentId) return;
     const handleKeyDown = (event) => {
@@ -3297,63 +3196,6 @@ const AppLayout = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [previewDocumentId, closeDocumentPreview]);
-
-  useEffect(() => {
-    if (!routeDocumentId) {
-      if (previewDocumentId) {
-        closeDocumentPreview();
-      }
-      return;
-    }
-
-    let cancelled = false;
-
-    const hydratePreview = async () => {
-      try {
-        const pool = searchResults ?? documents;
-        let doc = pool.find((item) => item.id === routeDocumentId) || null;
-
-        if (!doc) {
-          const { data } = await api.get(`/documents/${routeDocumentId}`);
-          const hydratedDetail = assetManager.hydrateDetail(data);
-          const fetched = hydratedDetail?.document || data.document || data;
-          doc = fetched ? assetManager.hydrateDocument(fetched) : null;
-        }
-
-        const targetFolder = doc?.folder_id || routeFolderId || 'root';
-        if (targetFolder && targetFolder !== selectedFolder) {
-          await loadFolder(targetFolder, { showLoading: false, preserveSearch: isFilterActive });
-        }
-        if (!cancelled) {
-          await openDocumentPreview(routeDocumentId, { replace: true, skipNavigate: true });
-        }
-      } catch (error) {
-        if (!cancelled) {
-          notifyApiError(error, 'Failed to open document preview.');
-        }
-      }
-    };
-
-    hydratePreview();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    routeDocumentId,
-    routeFolderId,
-    api,
-    assetManager,
-    selectedFolder,
-    loadFolder,
-    openDocumentPreview,
-    previewDocumentId,
-    closeDocumentPreview,
-    documents,
-    searchResults,
-    notifyApiError,
-    isFilterActive,
-  ]);
 
   const handleDocumentTitleUpdate = useCallback(
     async (documentId, nextTitle) => {
@@ -4635,6 +4477,9 @@ const AppLayout = () => {
       showSkeuoWorkspace,
       exitSkeuoWorkspace,
       skeuoWorkspaceProps,
+      ensurePreviewData,
+      notifyApiError,
+      resolveApiPath,
     }),
     [
       token,
@@ -4670,6 +4515,9 @@ const AppLayout = () => {
       showSkeuoWorkspace,
       exitSkeuoWorkspace,
       skeuoWorkspaceProps,
+      ensurePreviewData,
+      notifyApiError,
+      resolveApiPath,
     ],
   );
 
@@ -4826,40 +4674,14 @@ const AppLayout = () => {
   );
 };
 
-const useAppShell = () => {
-  const context = useContext(AppShellContext);
-  if (!context) {
-    throw new Error('AppShellContext not found. Ensure routes are nested under AppLayout.');
-  }
-  return context;
-};
-
 const DocumentsRoute = () => {
   const {
     sidebarProps,
-    previewActive,
-    previewWorkspaceDocument,
-    previewWorkspaceEntry,
-    closeDocumentPreview,
-    handleThumbnailRegeneration,
     documentsTableProps,
     detailPanelProps,
     workspaceMode,
     skeuoWorkspaceProps,
   } = useAppShell();
-
-  if (previewActive && previewWorkspaceDocument) {
-    return (
-      <main className="preview-main">
-        <PreviewWorkspace
-          document={previewWorkspaceDocument}
-          previewEntry={previewWorkspaceEntry}
-          onClose={closeDocumentPreview}
-          onRegenerateThumbnails={handleThumbnailRegeneration}
-        />
-      </main>
-    );
-  }
 
   if (workspaceMode === 'skeuo') {
     return (
@@ -4998,11 +4820,7 @@ const AppRouter = () => (
       <Route path="/" element={<Navigate to="/documents" replace />} />
       <Route path="/documents" element={<DocumentsRoute />} />
       <Route path="/documents/folder/:folderId" element={<DocumentsRoute />} />
-      <Route
-        path="/documents/folder/:folderId/documents/:documentId"
-        element={<DocumentsRoute />}
-      />
-      <Route path="/documents/:documentId" element={<DocumentsRoute />} />
+      <Route path="/documents/:documentId" element={<DocumentViewerRoute />} />
       <Route path="/tags" element={<TagsRoute />} />
       <Route path="/correspondents" element={<CorrespondentsRoute />} />
       <Route path="*" element={<Navigate to="/documents" replace />} />
