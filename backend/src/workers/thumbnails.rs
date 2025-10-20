@@ -171,17 +171,8 @@ impl JobHandler for GenerateThumbnailsJob {
             }
         }
 
-        let thumbnail_asset_id = Uuid::new_v4();
-        let thumbnail_s3_key = format!(
-            "documents/{}/v{}/assets/{}/{}",
-            initial.document.id,
-            initial.version.version_number,
-            THUMBNAIL_ASSET_TYPE,
-            thumbnail_asset_id
-        );
-
         let preview_asset_id = Uuid::new_v4();
-        let preview_s3_key = format!(
+        let preview_base = format!(
             "documents/{}/v{}/assets/{}/{}",
             initial.document.id,
             initial.version.version_number,
@@ -189,60 +180,103 @@ impl JobHandler for GenerateThumbnailsJob {
             preview_asset_id
         );
 
-        if let Err(err) = state
-            .storage
-            .put_object(
-                &preview_s3_key,
-                generation.preview.image_bytes.clone(),
-                Some("image/png".into()),
-                None,
-            )
-            .await
-        {
-            warn!(job_id = %job.id, error = %err, "failed to upload preview; retrying");
-            return JobExecution::Retry {
-                delay: Duration::from_secs(30),
-                error: err.to_string(),
-            };
+        let thumbnail_asset_id = Uuid::new_v4();
+        let thumbnail_base = format!(
+            "documents/{}/v{}/assets/{}/{}",
+            initial.document.id,
+            initial.version.version_number,
+            THUMBNAIL_ASSET_TYPE,
+            thumbnail_asset_id
+        );
+
+        let mut preview_objects: Vec<AssetObjectPersistence> =
+            Vec::with_capacity(generation.preview.objects.len());
+        for (index, image) in generation.preview.objects.iter().enumerate() {
+            if index + 1 > i32::MAX as usize {
+                return JobExecution::Failed {
+                    error: "too many preview objects".to_string(),
+                };
+            }
+            let ordinal = (index + 1) as i32;
+            let s3_key = format!("{preview_base}/{ordinal}");
+
+            if let Err(err) = state
+                .storage
+                .put_object(
+                    &s3_key,
+                    image.image_bytes.clone(),
+                    Some("image/png".into()),
+                    None,
+                )
+                .await
+            {
+                warn!(job_id = %job.id, error = %err, ordinal, "failed to upload preview; retrying");
+                return JobExecution::Retry {
+                    delay: Duration::from_secs(30),
+                    error: err.to_string(),
+                };
+            }
+
+            preview_objects.push(AssetObjectPersistence {
+                ordinal,
+                s3_key,
+                width: image.width,
+                height: image.height,
+            });
         }
 
-        if let Err(err) = state
-            .storage
-            .put_object(
-                &thumbnail_s3_key,
-                generation.thumbnail.image_bytes.clone(),
-                Some("image/png".into()),
-                None,
-            )
-            .await
-        {
-            warn!(job_id = %job.id, error = %err, "failed to upload thumbnail; retrying");
-            return JobExecution::Retry {
-                delay: Duration::from_secs(30),
-                error: err.to_string(),
-            };
+        let mut thumbnail_objects: Vec<AssetObjectPersistence> =
+            Vec::with_capacity(generation.thumbnail.objects.len());
+        for (index, image) in generation.thumbnail.objects.iter().enumerate() {
+            if index + 1 > i32::MAX as usize {
+                return JobExecution::Failed {
+                    error: "too many thumbnail objects".to_string(),
+                };
+            }
+            let ordinal = (index + 1) as i32;
+            let s3_key = format!("{thumbnail_base}/{ordinal}");
+
+            if let Err(err) = state
+                .storage
+                .put_object(
+                    &s3_key,
+                    image.image_bytes.clone(),
+                    Some("image/png".into()),
+                    None,
+                )
+                .await
+            {
+                warn!(job_id = %job.id, error = %err, ordinal, "failed to upload thumbnail; retrying");
+                return JobExecution::Retry {
+                    delay: Duration::from_secs(30),
+                    error: err.to_string(),
+                };
+            }
+
+            thumbnail_objects.push(AssetObjectPersistence {
+                ordinal,
+                s3_key,
+                width: image.width,
+                height: image.height,
+            });
         }
+
+        let asset_persistences = vec![
+            AssetPersistence {
+                asset_type: PREVIEW_ASSET_TYPE,
+                asset_id: preview_asset_id,
+                objects: preview_objects,
+            },
+            AssetPersistence {
+                asset_type: THUMBNAIL_ASSET_TYPE,
+                asset_id: thumbnail_asset_id,
+                objects: thumbnail_objects,
+            },
+        ];
 
         let state_clone = state.clone();
         match task::spawn_blocking(move || {
-            persist_assets_metadata(
-                state_clone,
-                &initial,
-                &[
-                    AssetPersistence {
-                        asset_type: PREVIEW_ASSET_TYPE,
-                        asset_id: preview_asset_id,
-                        s3_key: &preview_s3_key,
-                        generated: &generation.preview,
-                    },
-                    AssetPersistence {
-                        asset_type: THUMBNAIL_ASSET_TYPE,
-                        asset_id: thumbnail_asset_id,
-                        s3_key: &thumbnail_s3_key,
-                        generated: &generation.thumbnail,
-                    },
-                ],
-            )
+            persist_assets_metadata(state_clone, &initial, &asset_persistences)
         })
         .await
         {
@@ -283,17 +317,27 @@ struct GeneratedImage {
     height: Option<i32>,
 }
 
+struct GeneratedAsset {
+    objects: Vec<GeneratedImage>,
+}
+
 struct GeneratedAssets {
-    thumbnail: GeneratedImage,
-    preview: GeneratedImage,
+    thumbnail: GeneratedAsset,
+    preview: GeneratedAsset,
     page_count: Option<u32>,
 }
 
-struct AssetPersistence<'a> {
+struct AssetObjectPersistence {
+    ordinal: i32,
+    s3_key: String,
+    width: Option<i32>,
+    height: Option<i32>,
+}
+
+struct AssetPersistence {
     asset_type: &'static str,
     asset_id: Uuid,
-    s3_key: &'a str,
-    generated: &'a GeneratedImage,
+    objects: Vec<AssetObjectPersistence>,
 }
 
 fn load_thumbnail_context(
@@ -356,7 +400,25 @@ fn load_thumbnail_context(
         return Err("thumbnail generation not supported for this document".into());
     }
 
-    let skip = existing_thumbnail.is_some() && existing_preview.is_some() && !payload.force;
+    let expected_cardinality = expected_asset_cardinality(&document, &version);
+    let preview_cardinality = existing_preview
+        .as_ref()
+        .and_then(|asset| asset.cardinality)
+        .unwrap_or_else(|| existing_preview_objects.len() as i32);
+    let thumbnail_cardinality = existing_thumbnail
+        .as_ref()
+        .and_then(|asset| asset.cardinality)
+        .unwrap_or_else(|| existing_thumbnail_objects.len() as i32);
+
+    let needs_regeneration = preview_cardinality < expected_cardinality
+        || thumbnail_cardinality < expected_cardinality
+        || (existing_preview_objects.len() as i32) < expected_cardinality
+        || (existing_thumbnail_objects.len() as i32) < expected_cardinality;
+
+    let skip = existing_thumbnail.is_some()
+        && existing_preview.is_some()
+        && !payload.force
+        && !needs_regeneration;
 
     Ok(ThumbnailContext {
         document,
@@ -373,18 +435,7 @@ fn generate_preview_and_thumbnail(
     document: &Document,
     bytes: &[u8],
 ) -> Result<GeneratedAssets, String> {
-    let is_pdf = document
-        .content_type
-        .as_deref()
-        .map(|mime| mime == "application/pdf")
-        .unwrap_or_else(|| {
-            document
-                .original_name
-                .rsplit('.')
-                .next()
-                .map(|ext| ext.eq_ignore_ascii_case("pdf"))
-                .unwrap_or(false)
-        });
+    let is_pdf = document_is_pdf(document);
 
     if is_pdf {
         let pdf_assets = generate_pdf_assets(bytes)?;
@@ -403,7 +454,7 @@ fn generate_preview_and_thumbnail(
     }
 }
 
-fn generate_image_assets(bytes: &[u8]) -> Result<(GeneratedImage, GeneratedImage), String> {
+fn generate_image_assets(bytes: &[u8]) -> Result<(GeneratedAsset, GeneratedAsset), String> {
     let reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|err| err.to_string())?;
@@ -425,12 +476,19 @@ fn generate_image_assets(bytes: &[u8]) -> Result<(GeneratedImage, GeneratedImage
     let preview = encode_dynamic_image(preview_image)?;
     let thumbnail = encode_dynamic_image(thumbnail_image)?;
 
-    Ok((preview, thumbnail))
+    Ok((
+        GeneratedAsset {
+            objects: vec![preview],
+        },
+        GeneratedAsset {
+            objects: vec![thumbnail],
+        },
+    ))
 }
 
 struct PdfGeneratedAssets {
-    preview: GeneratedImage,
-    thumbnail: GeneratedImage,
+    preview: GeneratedAsset,
+    thumbnail: GeneratedAsset,
     page_count: u32,
 }
 
@@ -443,11 +501,7 @@ fn generate_pdf_assets(bytes: &[u8]) -> Result<PdfGeneratedAssets, String> {
         .map_err(|err| format!("load pdf: {err}"))?;
 
     let pages = document.pages();
-    let total_pages = pages.len();
-
-    let page = pages
-        .get(0)
-        .map_err(|err| format!("load first page: {err}"))?;
+    let total_pages = pages.len() as usize;
 
     let render_config = PdfRenderConfig::new()
         .set_target_width(PREVIEW_WIDTH as i32)
@@ -455,30 +509,44 @@ fn generate_pdf_assets(bytes: &[u8]) -> Result<PdfGeneratedAssets, String> {
         .render_form_data(true)
         .rotate_if_landscape(PdfPageRenderRotation::None, true);
 
-    let bitmap = page
-        .render_with_config(&render_config)
-        .map_err(|err| format!("render pdf page: {err}"))?;
+    let mut preview_objects: Vec<GeneratedImage> = Vec::with_capacity(total_pages);
+    let mut thumbnail_objects: Vec<GeneratedImage> = Vec::with_capacity(total_pages);
 
-    let preview_buffer = bitmap.as_image().to_rgb8();
-    let preview_image = image::DynamicImage::ImageRgb8(preview_buffer);
+    for page_index in 0..total_pages {
+        let page = pages
+            .get(u16::try_from(page_index).map_err(|_| "page index overflow".to_string())?)
+            .map_err(|err| format!("load page {page_index}: {err}"))?;
 
-    let thumbnail_image =
-        if preview_image.width() > THUMBNAIL_WIDTH || preview_image.height() > THUMBNAIL_HEIGHT {
+        let bitmap = page
+            .render_with_config(&render_config)
+            .map_err(|err| format!("render pdf page {page_index}: {err}"))?;
+
+        let preview_buffer = bitmap.as_image().to_rgb8();
+        let preview_image = image::DynamicImage::ImageRgb8(preview_buffer);
+
+        let thumbnail_image = if preview_image.width() > THUMBNAIL_WIDTH
+            || preview_image.height() > THUMBNAIL_HEIGHT
+        {
             preview_image.thumbnail(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT)
         } else {
             preview_image.clone()
         };
 
-    let preview = encode_dynamic_image(preview_image)?;
-    let thumbnail = encode_dynamic_image(thumbnail_image)?;
+        preview_objects.push(encode_dynamic_image(preview_image)?);
+        thumbnail_objects.push(encode_dynamic_image(thumbnail_image)?);
+    }
 
     let page_count: u32 = total_pages
         .try_into()
         .map_err(|_| "page count exceeds supported range".to_string())?;
 
     Ok(PdfGeneratedAssets {
-        preview,
-        thumbnail,
+        preview: GeneratedAsset {
+            objects: preview_objects,
+        },
+        thumbnail: GeneratedAsset {
+            objects: thumbnail_objects,
+        },
         page_count,
     })
 }
@@ -499,7 +567,7 @@ fn encode_dynamic_image(image: image::DynamicImage) -> Result<GeneratedImage, St
 fn persist_assets_metadata(
     state: Arc<AppState>,
     context: &ThumbnailContext,
-    assets: &[AssetPersistence<'_>],
+    assets: &[AssetPersistence],
 ) -> Result<(), String> {
     let mut conn = state.db().map_err(|err| format!("{err:?}"))?;
 
@@ -518,6 +586,19 @@ fn persist_assets_metadata(
     }
 
     for asset in assets {
+        if asset.objects.is_empty() {
+            return Err(format!(
+                "asset {} has no generated objects",
+                asset.asset_type
+            ));
+        }
+
+        let object_count: i32 = asset
+            .objects
+            .len()
+            .try_into()
+            .map_err(|_| "asset contains too many objects".to_string())?;
+
         let new_asset = NewDocumentAsset {
             id: asset.asset_id,
             document_version_id: context.version.id,
@@ -526,7 +607,7 @@ fn persist_assets_metadata(
             metadata: json!({
                 "generated_at": Utc::now().to_rfc3339(),
             }),
-            cardinality: Some(1),
+            cardinality: Some(object_count),
         };
 
         diesel::insert_into(document_assets::table)
@@ -544,47 +625,37 @@ fn persist_assets_metadata(
             .execute(&mut conn)
             .map_err(|err| format!("{err:?}"))?;
 
-        let existing_object_id: Option<Uuid> = document_asset_objects::table
-            .filter(document_asset_objects::asset_id.eq(asset.asset_id))
-            .filter(document_asset_objects::ordinal.eq(1))
-            .select(document_asset_objects::id)
-            .first(&mut conn)
-            .optional()
-            .map_err(|err| format!("{err:?}"))?;
+        diesel::delete(
+            document_asset_objects::table
+                .filter(document_asset_objects::asset_id.eq(asset.asset_id)),
+        )
+        .execute(&mut conn)
+        .map_err(|err| format!("{err:?}"))?;
 
-        let object_id = existing_object_id.unwrap_or_else(Uuid::new_v4);
+        for object in &asset.objects {
+            let mut metadata_map = Map::new();
+            if let Some(width) = object.width {
+                metadata_map.insert("width".to_string(), Value::from(width));
+            }
+            if let Some(height) = object.height {
+                metadata_map.insert("height".to_string(), Value::from(height));
+            }
 
-        let mut metadata_map = Map::new();
-        if let Some(width) = asset.generated.width {
-            metadata_map.insert("width".to_string(), Value::from(width));
+            let object_metadata = Value::Object(metadata_map);
+
+            let new_object = NewDocumentAssetObject {
+                id: Uuid::new_v4(),
+                asset_id: asset.asset_id,
+                ordinal: object.ordinal,
+                s3_key: object.s3_key.clone(),
+                metadata: object_metadata,
+            };
+
+            diesel::insert_into(document_asset_objects::table)
+                .values(&new_object)
+                .execute(&mut conn)
+                .map_err(|err| format!("{err:?}"))?;
         }
-        if let Some(height) = asset.generated.height {
-            metadata_map.insert("height".to_string(), Value::from(height));
-        }
-
-        let object_metadata = Value::Object(metadata_map);
-
-        let new_object = NewDocumentAssetObject {
-            id: object_id,
-            asset_id: asset.asset_id,
-            ordinal: 1,
-            s3_key: asset.s3_key.to_string(),
-            metadata: object_metadata,
-        };
-
-        diesel::insert_into(document_asset_objects::table)
-            .values(&new_object)
-            .on_conflict((
-                document_asset_objects::asset_id,
-                document_asset_objects::ordinal,
-            ))
-            .do_update()
-            .set((
-                document_asset_objects::s3_key.eq(excluded(document_asset_objects::s3_key)),
-                document_asset_objects::metadata.eq(excluded(document_asset_objects::metadata)),
-            ))
-            .execute(&mut conn)
-            .map_err(|err| format!("{err:?}"))?;
     }
 
     Ok(())
@@ -627,4 +698,38 @@ fn persist_document_page_count(
     .map_err(|err| format!("{err:?}"))?;
 
     Ok(())
+}
+
+fn document_is_pdf(document: &Document) -> bool {
+    document
+        .content_type
+        .as_deref()
+        .map(|mime| mime.eq_ignore_ascii_case("application/pdf"))
+        .unwrap_or_else(|| {
+            document
+                .original_name
+                .rsplit('.')
+                .next()
+                .map(|ext| ext.eq_ignore_ascii_case("pdf"))
+                .unwrap_or(false)
+        })
+}
+
+fn expected_asset_cardinality(document: &Document, version: &DocumentVersion) -> i32 {
+    if let Value::Object(map) = &version.metadata {
+        if let Some(count) = map.get("page_count").and_then(|v| v.as_i64()) {
+            if count > 0 {
+                return count
+                    .min(i64::from(i32::MAX))
+                    .try_into()
+                    .unwrap_or(i32::MAX);
+            }
+        }
+    }
+
+    if document_is_pdf(document) {
+        1
+    } else {
+        1
+    }
 }
