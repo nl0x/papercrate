@@ -159,7 +159,7 @@
   align-items: center;
   justify-content: flex-start;
   padding: 0.28rem 0.7rem;
-  border-radius: 1px;
+  border-radius: 1rem;
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0) 70%), var(--surface);
   color: var(--fg);
   font-size: 1rem;
