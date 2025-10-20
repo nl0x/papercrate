@@ -109,7 +109,8 @@ pub struct DocumentVersionResponse {
     pub checksum: String,
     pub created_at: String,
     pub metadata: Value,
-    pub operations_summary: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operations_summary: Option<Value>,
 }
 
 #[derive(Serialize, Clone)]
@@ -117,10 +118,12 @@ pub struct DocumentAssetResponse {
     pub id: Uuid,
     pub asset_type: String,
     pub mime_type: String,
-    pub metadata: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -606,7 +609,7 @@ pub async fn get_document(
     drop(conn);
 
     let assets = load_asset_responses(&state, version_id).await?;
-    let version_response = to_version_response(current_version);
+    let version_response = to_version_response(current_version, true);
 
     Ok(Json(DocumentDetailResponse {
         document: to_document_response(
@@ -887,6 +890,7 @@ pub async fn get_document_asset(
         asset,
         Some(object_metadata),
         Some(presigned_url),
+        AssetResponseScope::Detailed,
     )))
 }
 
@@ -1045,7 +1049,7 @@ pub async fn update_document(
     drop(conn);
 
     let assets = load_asset_responses(&state, version_id).await?;
-    let version_response = to_version_response(current_version);
+    let version_response = to_version_response(current_version, true);
 
     Ok(Json(DocumentDetailResponse {
         document: to_document_response(
@@ -1584,7 +1588,7 @@ async fn process_upload(
             let correspondents = correspondents_map.remove(&document.id).unwrap_or_default();
             drop(conn);
             let assets = load_asset_responses(state, version.id).await?;
-            let version_response = to_version_response(version.clone());
+            let version_response = to_version_response(version.clone(), true);
 
             info!(
                 document_id = %document.id,
@@ -1677,7 +1681,7 @@ async fn process_upload(
             document,
             None,
             Vec::new(),
-            Some((to_version_response(version.clone()), Vec::new())),
+            Some((to_version_response(version.clone(), true), Vec::new())),
         )?,
     };
 
@@ -1817,7 +1821,12 @@ pub(crate) async fn load_primary_assets(
     let mut assets_by_version: HashMap<Uuid, Vec<DocumentAssetResponse>> = HashMap::new();
     for (asset, object) in assets {
         let version_id = asset.document_version_id;
-        let response = to_asset_response(asset, object.map(|o| o.metadata), None);
+        let response = to_asset_response(
+            asset,
+            object.map(|o| o.metadata),
+            None,
+            AssetResponseScope::Summary,
+        );
         assets_by_version
             .entry(version_id)
             .or_default()
@@ -1831,7 +1840,7 @@ pub(crate) async fn load_primary_assets(
     for (doc_id, version_id) in doc_to_version {
         if let Some(version) = version_map.remove(&version_id) {
             let assets = assets_by_version.remove(&version_id).unwrap_or_default();
-            result.insert(doc_id, (to_version_response(version), assets));
+            result.insert(doc_id, (to_version_response(version, false), assets));
         }
     }
 
@@ -1887,7 +1896,10 @@ fn build_download_path(state: &AppState, document_id: Uuid, user_id: Uuid) -> Ap
         .map_err(|err| AppError::internal(format!("failed to generate download token: {err}")))
 }
 
-fn to_version_response(version: DocumentVersion) -> DocumentVersionResponse {
+fn to_version_response(
+    version: DocumentVersion,
+    include_operations_summary: bool,
+) -> DocumentVersionResponse {
     DocumentVersionResponse {
         id: version.id,
         version_number: version.version_number,
@@ -1896,7 +1908,11 @@ fn to_version_response(version: DocumentVersion) -> DocumentVersionResponse {
         checksum: version.checksum,
         created_at: to_iso(version.created_at),
         metadata: version.metadata,
-        operations_summary: version.operations_summary,
+        operations_summary: if include_operations_summary {
+            Some(version.operations_summary)
+        } else {
+            None
+        },
     }
 }
 
@@ -1914,19 +1930,38 @@ fn merge_metadata(base: &Value, overlay: Option<&Value>) -> Value {
     }
 }
 
+#[derive(Clone, Copy)]
+enum AssetResponseScope {
+    Summary,
+    Detailed,
+}
+
 fn to_asset_response(
     asset: DocumentAsset,
     object_metadata: Option<Value>,
     url: Option<String>,
+    scope: AssetResponseScope,
 ) -> DocumentAssetResponse {
-    let metadata = merge_metadata(&asset.metadata, object_metadata.as_ref());
-    DocumentAssetResponse {
-        id: asset.id,
-        asset_type: asset.asset_type,
-        mime_type: asset.mime_type,
-        metadata,
-        url,
-        created_at: to_iso(asset.created_at),
+    match scope {
+        AssetResponseScope::Summary => DocumentAssetResponse {
+            id: asset.id,
+            asset_type: asset.asset_type,
+            mime_type: asset.mime_type,
+            metadata: None,
+            url: None,
+            created_at: None,
+        },
+        AssetResponseScope::Detailed => {
+            let metadata = merge_metadata(&asset.metadata, object_metadata.as_ref());
+            DocumentAssetResponse {
+                id: asset.id,
+                asset_type: asset.asset_type,
+                mime_type: asset.mime_type,
+                metadata: Some(metadata),
+                url,
+                created_at: Some(to_iso(asset.created_at)),
+            }
+        }
     }
 }
 
@@ -1988,7 +2023,14 @@ async fn load_asset_responses(
 
     Ok(assets
         .into_iter()
-        .map(|(asset, object)| to_asset_response(asset, object.map(|o| o.metadata), None))
+        .map(|(asset, object)| {
+            to_asset_response(
+                asset,
+                object.map(|o| o.metadata),
+                None,
+                AssetResponseScope::Detailed,
+            )
+        })
         .collect())
 }
 
