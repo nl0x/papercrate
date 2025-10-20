@@ -189,6 +189,59 @@
   user-select: none;
 }
 
+
+.skeuo-card__nav {
+  position: absolute;
+  bottom: calc(3em * 0.707 * var(--nav-scale));
+  left: 50%;
+  transform: translateX(-50%) scale(calc(0.707 * var(--nav-scale, 1)));
+  transform-origin: center;
+  display: flex;
+  gap: 2rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.skeuo-item__card:hover .skeuo-card__nav {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.skeuo-card__nav-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.3em;
+  height: 3.3em;
+  padding: 0.36em;
+  border-radius: 3.3em;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.skeuo-card__nav-button:hover:not([disabled]) {
+  background: rgba(0, 0, 0, 0.75);
+}
+
+.skeuo-card__nav-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.skeuo-card__nav-button:focus-visible {
+  outline: 2px solid var(--accent, #2684ff);
+  outline-offset: 2px;
+}
+
+.skeuo-card__nav-button svg {
+  width: 100%;
+  height: 100%;
+}
+
 .skeuo-item__tags .skeuo-tag.is-tear-pending {
   opacity: 0.4;
 }
@@ -210,6 +263,7 @@ body.skeuo-cursor-remove * {
   justify-content: center;
   box-shadow: 0 24px 72px rgba(0, 0, 0, 0.24);
   overflow: hidden;
+  --nav-scale: 1;
 }
 
 .skeuo-item__card--empty {

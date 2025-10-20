@@ -21,7 +21,7 @@ import {
   matchPath,
 } from 'react-router-dom';
 import './styles.css';
-import AssetManager, { getAssetFromVersion, resolveDocumentAssetUrl } from './asset_manager';
+import AssetManager, { getAssetFromVersion, resolveDocumentAssetUrl, createAssetView } from './asset_manager';
 import useApiError from './hooks/useApiError';
 import SkeuomorphicWorkspace from './skeuomorphic_ws';
 import DetailPanel from './detail/DetailPanel';
@@ -413,8 +413,27 @@ const AppLayout = () => {
 
   const isAssetEquivalent = (lhs, rhs) => {
     if (!lhs || !rhs) return false;
-    const lhsPrimaryMetadata = lhs?.objects?.[0]?.metadata || lhs?.metadata;
-    const rhsPrimaryMetadata = rhs?.objects?.[0]?.metadata || rhs?.metadata;
+    const lhsView = createAssetView(lhs);
+    const rhsView = createAssetView(rhs);
+    const lhsPrimaryMetadata = lhsView.getPrimaryMetadata() || lhs?.metadata;
+    const rhsPrimaryMetadata = rhsView.getPrimaryMetadata() || rhs?.metadata;
+    const lhsCardinality = lhsView.getCardinality() || lhs?.cardinality || null;
+    const rhsCardinality = rhsView.getCardinality() || rhs?.cardinality || null;
+    const lhsObjects = lhsView.getObjects();
+    const rhsObjects = rhsView.getObjects();
+    const objectsComparable = lhsObjects.length === rhsObjects.length
+      && lhsObjects.every((entry, index) => {
+        const other = rhsObjects[index];
+        if (!other) return false;
+        if (entry.ordinal !== other.ordinal) return false;
+        if (entry.url && other.url && entry.url === other.url) {
+          return true;
+        }
+        if (!entry.url && !other.url) {
+          return JSON.stringify(entry.metadata || null) === JSON.stringify(other.metadata || null);
+        }
+        return entry.url === other.url;
+      });
     return (
       lhs.id === rhs.id &&
       lhs.url === rhs.url &&
@@ -422,7 +441,9 @@ const AppLayout = () => {
       lhsPrimaryMetadata?.height === rhsPrimaryMetadata?.height &&
       lhs.mime_type === rhs.mime_type &&
       lhs.asset_type === rhs.asset_type &&
-      lhs.created_at === rhs.created_at
+      lhs.created_at === rhs.created_at &&
+      lhsCardinality === rhsCardinality &&
+      objectsComparable
     );
   };
 
@@ -2354,13 +2375,17 @@ const AppLayout = () => {
   );
 
   const ensureAssetUrl = useCallback(
-    async (documentId, asset, { force = false } = {}) => {
+    async (documentId, asset, { force = false, start = null, limit = null } = {}) => {
       if (!documentId || !asset?.id) {
         return null;
       }
 
       try {
-        const entry = await assetManager.ensureAsset(documentId, asset, { force });
+        const entry = await assetManager.ensureAsset(documentId, asset, {
+          force,
+          start,
+          limit,
+        });
 
         if (!entry) {
           return null;

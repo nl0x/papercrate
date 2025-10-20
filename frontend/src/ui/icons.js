@@ -7,6 +7,8 @@ import {
   IconTrash,
   IconLayoutList,
   IconLayoutGrid,
+  IconArrowLeft,
+  IconArrowRight,
 } from '@tabler/icons-react';
 import FolderSvg from '../assets/folder.svg';
 
@@ -93,6 +95,24 @@ export const ViewListIcon = ({ className, size = '1em', stroke = 1.6, ...rest })
 
 export const ViewGridIcon = ({ className, size = '1em', stroke = 1.6, ...rest }) => (
   <IconLayoutGrid
+    className={composeClassName('icon', className)}
+    size={size}
+    stroke={stroke}
+    {...rest}
+  />
+);
+
+export const ArrowLeftIcon = ({ className, size = '1em', stroke = 1.6, ...rest }) => (
+  <IconArrowLeft
+    className={composeClassName('icon', className)}
+    size={size}
+    stroke={stroke}
+    {...rest}
+  />
+);
+
+export const ArrowRightIcon = ({ className, size = '1em', stroke = 1.6, ...rest }) => (
+  <IconArrowRight
     className={composeClassName('icon', className)}
     size={size}
     stroke={stroke}

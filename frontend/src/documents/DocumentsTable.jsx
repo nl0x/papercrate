@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { getAssetFromVersion, resolveDocumentAssetUrl } from '../asset_manager';
+import { getAssetFromVersion, resolveDocumentAssetUrl, createAssetView } from '../asset_manager';
 import { getTagColorStyle } from '../utils/colors';
 import { DownloadIcon, EditIcon, ViewListIcon, ViewGridIcon, FolderIcon } from '../ui/icons';
 
@@ -21,9 +21,12 @@ const DocumentThumbnailImage = ({
   maxSize = LIST_ICON_SIZE,
 }) => {
   const resolvedMaxSize = Math.max(1, Math.round(maxSize || 1));
-  const thumbnailAsset = useMemo(() => getAssetFromVersion(document?.current_version, 'thumbnail'), [document?.current_version]);
-  const primaryObject = thumbnailAsset?.objects?.[0] || null;
-  const primaryMetadata = primaryObject?.metadata || thumbnailAsset?.metadata || {};
+  const thumbnailAsset = useMemo(
+    () => getAssetFromVersion(document?.current_version, 'thumbnail'),
+    [document?.current_version],
+  );
+  const thumbnailView = useMemo(() => createAssetView(thumbnailAsset), [thumbnailAsset]);
+  const primaryMetadata = thumbnailView.getPrimaryMetadata() || {};
   const assetWidth = Number(primaryMetadata?.width);
   const assetHeight = Number(primaryMetadata?.height);
 

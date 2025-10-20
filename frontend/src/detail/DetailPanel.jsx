@@ -1,14 +1,24 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { DownloadIcon, EditIcon } from '../ui/icons';
+import { DownloadIcon, EditIcon, ArrowLeftIcon, ArrowRightIcon } from '../ui/icons';
 import { getTagColorStyle } from '../utils/colors';
 import { formatFileSize } from '../utils/format';
-import { resolveDocumentAssetUrl } from '../asset_manager';
+import { resolveDocumentAssetUrl, createAssetView } from '../asset_manager';
+import { useAssetNavigator } from '../hooks/useAssetNavigator';
 import { CORRESPONDENT_ROLES } from '../constants/correspondents';
 
 const MAX_PREVIEW_STACK_ITEMS = 15;
 
 const normalizeRole = (role) => (role || '').toLowerCase();
+
+const derivePreviewOrientation = (metadata) => {
+  const width = Number(metadata?.width);
+  const height = Number(metadata?.height);
+  if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+    return width >= height ? 'landscape' : 'portrait';
+  }
+  return 'landscape';
+};
 
 const formatRoleLabel = (role) => {
   const normalized = normalizeRole(role);
@@ -435,22 +445,34 @@ const DetailPanel = ({
     setOcrOpen(false);
   }, []);
 
+  const singlePreviewNavigator = useAssetNavigator({
+    document: singleDoc,
+    assetType: 'preview',
+    ensureAssetUrl,
+    getAsset: getDocumentAsset,
+    prefetch: 3,
+  });
+
   const makePreviewItem = useCallback(
-    (doc) => {
+    (doc, ordinal = 1) => {
       if (!doc) return null;
-      const url = resolveDocumentAssetUrl(doc, 'preview', {
-        ensureAssetUrl,
-        getAsset: getDocumentAsset,
-      });
+      const asset = getDocumentAsset(doc, 'preview');
+      const assetView = createAssetView(asset);
+      const object = assetView.getObject(ordinal);
+      let url = object?.url || null;
+      if (!url) {
+        url = resolveDocumentAssetUrl(doc, 'preview', {
+          ensureAssetUrl,
+          getAsset: getDocumentAsset,
+          ensureOptions: { start: ordinal, limit: 1 },
+          objectOrdinal: ordinal,
+        });
+      }
       if (!url) {
         return null;
       }
-      const asset = getDocumentAsset(doc, 'preview');
-      const primaryObject = asset?.objects?.[0] || null;
-      const primaryMetadata = primaryObject?.metadata || asset?.metadata || {};
-      const width = Number(primaryMetadata?.width) || 0;
-      const height = Number(primaryMetadata?.height) || 0;
-      const orientation = width > 0 && height > 0 ? (width >= height ? 'landscape' : 'portrait') : 'landscape';
+      const metadata = object?.metadata || assetView.getPrimaryMetadata() || {};
+      const orientation = derivePreviewOrientation(metadata);
       return {
         id: doc.id,
         url,
@@ -477,32 +499,74 @@ const DetailPanel = ({
     return ordered;
   }, [selectedDocuments]);
 
+  const stackTopDocument = stackDocuments[0] || null;
+  const stackPreviewNavigator = useAssetNavigator({
+    document: stackTopDocument,
+    assetType: 'preview',
+    ensureAssetUrl,
+    getAsset: getDocumentAsset,
+    prefetch: 3,
+  });
+
   const singlePreviewItems = useMemo(() => {
     if (!singleDoc) return [];
-    const item = makePreviewItem(singleDoc);
-    return item ? [item] : [];
-  }, [singleDoc, makePreviewItem]);
-
-  const stackPreviews = useMemo(
-    () =>
-      stackDocuments
-        .map((doc) => makePreviewItem(doc))
-        .filter(Boolean),
-    [stackDocuments, makePreviewItem],
-  );
-
-  useEffect(() => {
-    if (!ensureAssetUrl) {
-      return;
+    const url = singlePreviewNavigator.currentUrl;
+    if (!url) {
+      return [];
     }
+    const orientation = derivePreviewOrientation(singlePreviewNavigator.currentMetadata);
+    return [
+      {
+        id: singleDoc.id,
+        url,
+        orientation,
+        alt: singleDoc.title || singleDoc.original_name || 'Document preview',
+      },
+    ];
+  }, [singleDoc, singlePreviewNavigator.currentUrl, singlePreviewNavigator.currentMetadata]);
 
-    stackDocuments.forEach((doc) => {
-      resolveDocumentAssetUrl(doc, 'preview', {
-        ensureAssetUrl,
-        getAsset: getDocumentAsset,
-      });
-    });
-  }, [stackDocuments, ensureAssetUrl, getDocumentAsset]);
+  const stackPreviews = useMemo(() => {
+    if (!stackDocuments.length) {
+      return [];
+    }
+    return stackDocuments
+      .map((doc) => {
+        if (!doc) return null;
+        if (stackTopDocument && doc.id === stackTopDocument.id) {
+          const url = stackPreviewNavigator.currentUrl;
+          if (!url) {
+            return null;
+          }
+          const orientation = derivePreviewOrientation(stackPreviewNavigator.currentMetadata);
+          return {
+            id: doc.id,
+            url,
+            orientation,
+            alt: doc.title || doc.original_name || 'Document preview',
+          };
+        }
+        return makePreviewItem(doc, 1);
+      })
+      .filter(Boolean);
+  }, [
+    stackDocuments,
+    stackTopDocument,
+    stackPreviewNavigator.currentUrl,
+    stackPreviewNavigator.currentMetadata,
+    makePreviewItem,
+  ]);
+
+  const singleCardinality = singlePreviewNavigator.cardinality;
+  const singleEffectiveCardinality = singleCardinality || (singlePreviewNavigator.currentUrl ? 1 : 0);
+  const singleHasPreview = Boolean(singlePreviewNavigator.currentUrl);
+
+  const topDocId = stackTopDocument?.id || null;
+  const topCardinality = stackPreviewNavigator.cardinality;
+  const topEffectiveCardinality = topCardinality || (stackPreviewNavigator.currentUrl ? 1 : 0);
+  const topHasPreview = Boolean(stackPreviewNavigator.currentUrl);
+  const topOrdinal = stackPreviewNavigator.ordinal;
+  const topCanGoPrev = stackPreviewNavigator.canGoPrev;
+  const topCanGoNext = stackPreviewNavigator.canGoNext;
 
   const bulkTagUnion = useMemo(() => {
     if (!selectedDocuments.length) return [];
@@ -661,19 +725,64 @@ const DetailPanel = ({
     const hasPageCount = Number.isFinite(pageCountValue) && pageCountValue >= 0;
     const metadata =
       singleDoc.metadata && Object.keys(singleDoc.metadata).length > 0 ? singleDoc.metadata : null;
+    const effectiveCardinality = singleEffectiveCardinality;
+    const canGoPrev = singlePreviewNavigator.canGoPrev;
+    const canGoNext = singlePreviewNavigator.canGoNext;
+    const hasPreviewImage = singleHasPreview;
+    const interceptNavPointer = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
     return (
       <>
-        <div>
-          <div className="preview-pane preview-pane--stack">
-            <PreviewStack
-              items={singlePreviewItems}
-              maxItems={1}
-              emptyMessage="Preview loading…"
-              onItemActivate={handlePreviewActivate}
-              onOpenPreview={onOpenPreview}
-              activeItemId={activePreviewId}
-            />
-          </div>
+        <div className="preview-pane preview-pane--stack">
+          <PreviewStack
+            items={singlePreviewItems}
+            maxItems={1}
+            emptyMessage="Preview loading…"
+            onItemActivate={handlePreviewActivate}
+            onOpenPreview={onOpenPreview}
+            activeItemId={activePreviewId}
+          />
+          {hasPreviewImage && (effectiveCardinality > 1 || canGoPrev || canGoNext) ? (
+              <div className="preview-pane__nav preview-pane__nav--overlay">
+                <button
+                  type="button"
+                  className="preview-pane__nav-button preview-pane__nav-button--prev"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    singlePreviewNavigator.goPrev();
+                  }}
+                  onPointerDown={interceptNavPointer}
+                  onPointerUp={interceptNavPointer}
+                  onMouseDown={interceptNavPointer}
+                  onMouseUp={interceptNavPointer}
+                  disabled={!canGoPrev}
+                  aria-label="Previous preview"
+                >
+                  <ArrowLeftIcon />
+                </button>
+              <button
+                type="button"
+                  className="preview-pane__nav-button preview-pane__nav-button--next"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    singlePreviewNavigator.goNext();
+                  }}
+                  onPointerDown={interceptNavPointer}
+                  onPointerUp={interceptNavPointer}
+                  onMouseDown={interceptNavPointer}
+                  onMouseUp={interceptNavPointer}
+                  disabled={!canGoNext}
+                  aria-label="Next preview"
+                >
+                  <ArrowRightIcon />
+                </button>
+            </div>
+          ) : null}
         </div>
         <div className="doc-title-row">
           {isEditingTitle ? (
@@ -873,19 +982,66 @@ const DetailPanel = ({
   const renderBulk = () => {
     const countLabel = `${selectedCount} document${selectedCount === 1 ? '' : 's'}`;
     const sizeLabel = stackTotalSizeBytes ? formatFileSize(stackTotalSizeBytes) : '—';
+    const topDoc = stackTopDocument;
+    const topDocIdLocal = topDocId;
+    const topOrdinal = stackPreviewNavigator.ordinal;
+    const topCardinalityLocal = topEffectiveCardinality;
+    const topHasPreview = Boolean(stackPreviewNavigator.currentUrl);
+    const topCanGoPrev = stackPreviewNavigator.canGoPrev;
+    const topCanGoNext = stackPreviewNavigator.canGoNext;
+    const interceptTopNavPointer = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
 
     return (
       <>
-        <div>
-          <div className="preview-pane preview-pane--stack">
-            <PreviewStack
-              items={stackPreviews}
-              emptyMessage="No previews available."
-              onItemActivate={handlePreviewActivate}
-              onOpenPreview={onOpenPreview}
-              activeItemId={activePreviewId}
-            />
-          </div>
+        <div className="preview-pane preview-pane--stack">
+          <PreviewStack
+            items={stackPreviews}
+            emptyMessage="No previews available."
+            onItemActivate={handlePreviewActivate}
+            onOpenPreview={onOpenPreview}
+            activeItemId={activePreviewId}
+          />
+          {topDocIdLocal && topHasPreview && (topCardinalityLocal > 1 || topCanGoPrev || topCanGoNext) ? (
+            <div className="preview-pane__nav preview-pane__nav--overlay">
+                <button
+                  type="button"
+                  className="preview-pane__nav-button preview-pane__nav-button--prev"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    stackPreviewNavigator.goPrev();
+                  }}
+                  onPointerDown={interceptTopNavPointer}
+                  onPointerUp={interceptTopNavPointer}
+                  onMouseDown={interceptTopNavPointer}
+                  onMouseUp={interceptTopNavPointer}
+                  disabled={!topCanGoPrev}
+                  aria-label="Previous preview"
+                >
+                  <ArrowLeftIcon />
+                </button>
+              <button
+                type="button"
+                  className="preview-pane__nav-button preview-pane__nav-button--next"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    stackPreviewNavigator.goNext();
+                  }}
+                  onPointerDown={interceptTopNavPointer}
+                  onPointerUp={interceptTopNavPointer}
+                  onMouseDown={interceptTopNavPointer}
+                  onMouseUp={interceptTopNavPointer}
+                  disabled={!topCanGoNext}
+                  aria-label="Next preview"
+                >
+                  <ArrowRightIcon />
+                </button>
+            </div>
+          ) : null}
         </div>
         <h3 style={{ margin: 0 }}>{countLabel}</h3>
         <div className="meta">

@@ -6,7 +6,9 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { resolveDocumentAssetUrl } from './asset_manager';
+import { resolveDocumentAssetUrl, createAssetView } from './asset_manager';
+import { useAssetNavigator } from './hooks/useAssetNavigator';
+import { ArrowLeftIcon, ArrowRightIcon } from './ui/icons';
 import { getReadableTextColor } from './utils/colors';
 import './skeuomorphic_ws.css';
 
@@ -41,6 +43,107 @@ const resolveTagKey = (tag) => {
   }
   const key = tag.id ?? tag.uuid ?? tag.slug ?? tag.label;
   return key != null ? String(key) : null;
+};
+
+const SkeuoPreviewCard = ({
+  doc,
+  title,
+  ensureAssetUrl,
+  getDocumentAsset,
+  navScale = 1,
+  prefetch = 3,
+}) => {
+  const navigator = useAssetNavigator({
+    document: doc,
+    assetType: 'preview',
+    ensureAssetUrl,
+    getAsset: getDocumentAsset,
+    prefetch,
+  });
+
+  const { currentUrl, cardinality, canGoPrev, canGoNext } = navigator;
+  const hasPreview = Boolean(currentUrl);
+  const cardClasses = ['skeuo-item__card'];
+  if (!hasPreview) cardClasses.push('skeuo-item__card--empty');
+  const showNav = hasPreview && (cardinality > 1 || canGoPrev || canGoNext);
+  const navStyle = useMemo(() => ({ '--nav-scale': navScale }), [navScale]);
+
+  return (
+    <div className={cardClasses.join(' ')}>
+      {hasPreview ? (
+        <img src={currentUrl} alt={title} />
+      ) : (
+        <div className="skeuo-item__empty">
+          <div className="skeuo-item__placeholder">DOC</div>
+          <div className="skeuo-item__title" title={title}>
+            {title}
+          </div>
+        </div>
+      )}
+      {showNav ? (
+        <div className="skeuo-card__nav" style={navStyle}>
+          <button
+            type="button"
+            className="skeuo-card__nav-button"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              navigator.goPrev();
+            }}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onPointerUp={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onMouseUp={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            disabled={!canGoPrev}
+            aria-label="Previous preview"
+          >
+            <ArrowLeftIcon />
+          </button>
+          <button
+            type="button"
+            className="skeuo-card__nav-button"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              navigator.goNext();
+            }}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onPointerUp={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onMouseUp={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            disabled={!canGoNext}
+            aria-label="Next preview"
+          >
+            <ArrowRightIcon />
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
 };
 
 const generateInitialLayout = (
@@ -502,27 +605,16 @@ const SkeuomorphicWorkspace = ({
     (doc) => {
       if (!doc) return null;
       const asset = resolvePreviewAsset(doc);
-      const primaryObject = asset?.objects?.[0] || null;
-      const primaryMetadata = primaryObject?.metadata || asset?.metadata || {};
-      const width = primaryMetadata?.width;
-      const height = primaryMetadata?.height;
+      const view = createAssetView(asset);
+      const metadata = view.getPrimaryMetadata() || {};
+      const width = metadata?.width;
+      const height = metadata?.height;
       if (typeof width === 'number' && typeof height === 'number') {
         return { width, height };
       }
       return null;
     },
     [resolvePreviewAsset],
-  );
-
-  const resolvePreviewUrl = useCallback(
-    (doc) => {
-      if (!doc) return null;
-      return resolveDocumentAssetUrl(doc, 'preview', {
-        ensureAssetUrl,
-        getAsset: getDocumentAsset,
-      });
-    },
-    [ensureAssetUrl, getDocumentAsset],
   );
 
   useEffect(() => {
@@ -1491,9 +1583,6 @@ const SkeuomorphicWorkspace = ({
             const totalScale = zoomScale > 0 ? zoomScale : 1;
             const inverseTagScale = totalScale > 0 ? 1 / totalScale : 1;
             const tagsStyle = { '--tag-scale': inverseTagScale };
-            const previewUrl = resolvePreviewUrl(doc);
-            const imageUrl = previewUrl;
-            const hasPreview = Boolean(imageUrl);
             const title = doc.title || doc.original_name || 'Document';
             const dragging = draggingId === doc.id;
             const tags = Array.isArray(doc.tags) ? doc.tags : [];
@@ -1510,8 +1599,6 @@ const SkeuomorphicWorkspace = ({
             if (dropActive) itemClasses.push('is-tag-target');
             if (dropPending) itemClasses.push('is-tag-pending');
             if (!matchesFilter) itemClasses.push('is-filtered-out');
-            const cardClasses = ['skeuo-item__card'];
-            if (!hasPreview) cardClasses.push('skeuo-item__card--empty');
             const docTagTokens = docTagKeys.join(' ');
             return (
               <div
@@ -1547,18 +1634,13 @@ const SkeuomorphicWorkspace = ({
                 }}
               >
                 <div className="skeuo-item__body" style={bodyStyle}>
-                  <div className={cardClasses.join(' ')}>
-                    {hasPreview ? (
-                      <img src={imageUrl} alt={title} />
-                    ) : (
-                      <div className="skeuo-item__empty">
-                        <div className="skeuo-item__placeholder">DOC</div>
-                        <div className="skeuo-item__title" title={title}>
-                          {title}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  <SkeuoPreviewCard
+                    doc={doc}
+                    title={title}
+                    ensureAssetUrl={ensureAssetUrl}
+                    getDocumentAsset={getDocumentAsset}
+                    navScale={inverseTagScale}
+                  />
                   {tags.length > 0 && (
                     <div className="skeuo-item__tags" aria-hidden="true" style={tagsStyle}>
                       {tags.map((tag) => {
