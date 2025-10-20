@@ -502,8 +502,10 @@ const SkeuomorphicWorkspace = ({
     (doc) => {
       if (!doc) return null;
       const asset = resolvePreviewAsset(doc);
-      const width = asset?.metadata?.width;
-      const height = asset?.metadata?.height;
+      const primaryObject = asset?.objects?.[0] || null;
+      const primaryMetadata = primaryObject?.metadata || asset?.metadata || {};
+      const width = primaryMetadata?.width;
+      const height = primaryMetadata?.height;
       if (typeof width === 'number' && typeof height === 'number') {
         return { width, height };
       }

@@ -446,8 +446,10 @@ const DetailPanel = ({
         return null;
       }
       const asset = getDocumentAsset(doc, 'preview');
-      const width = Number(asset?.metadata?.width) || 0;
-      const height = Number(asset?.metadata?.height) || 0;
+      const primaryObject = asset?.objects?.[0] || null;
+      const primaryMetadata = primaryObject?.metadata || asset?.metadata || {};
+      const width = Number(primaryMetadata?.width) || 0;
+      const height = Number(primaryMetadata?.height) || 0;
       const orientation = width > 0 && height > 0 ? (width >= height ? 'landscape' : 'portrait') : 'landscape';
       return {
         id: doc.id,

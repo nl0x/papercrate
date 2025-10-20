@@ -75,7 +75,6 @@ pub fn create_router(state: AppState) -> Router<()> {
                 .patch(documents::update_document),
         )
         .route("/:id/download", get(documents::download_document))
-        .route("/:id/assets/:asset_id", get(documents::get_document_asset))
         .route(
             "/:id/assets",
             get(documents::list_document_assets).post(documents::request_document_assets),
@@ -120,11 +119,14 @@ pub fn create_router(state: AppState) -> Router<()> {
         );
 
     let protected_state = state.clone();
+    let assets_routes = Router::new().route("/:asset_id", get(documents::get_document_asset));
+
     let protected_routes = Router::new()
         .nest("/api/documents", documents_routes)
         .nest("/api/folders", folders_routes)
         .nest("/api/tags", tags_routes)
         .nest("/api/correspondents", correspondents_routes)
+        .nest("/api/assets", assets_routes)
         .layer(middleware::from_extractor_with_state::<AuthenticatedUser, _>(protected_state));
 
     Router::new()

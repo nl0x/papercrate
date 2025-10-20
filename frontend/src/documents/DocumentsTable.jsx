@@ -22,8 +22,10 @@ const DocumentThumbnailImage = ({
 }) => {
   const resolvedMaxSize = Math.max(1, Math.round(maxSize || 1));
   const thumbnailAsset = useMemo(() => getAssetFromVersion(document?.current_version, 'thumbnail'), [document?.current_version]);
-  const assetWidth = Number(thumbnailAsset?.metadata?.width);
-  const assetHeight = Number(thumbnailAsset?.metadata?.height);
+  const primaryObject = thumbnailAsset?.objects?.[0] || null;
+  const primaryMetadata = primaryObject?.metadata || thumbnailAsset?.metadata || {};
+  const assetWidth = Number(primaryMetadata?.width);
+  const assetHeight = Number(primaryMetadata?.height);
 
   const dimensions = useMemo(() => {
     if (!Number.isFinite(assetWidth) || assetWidth <= 0 || !Number.isFinite(assetHeight) || assetHeight <= 0) {

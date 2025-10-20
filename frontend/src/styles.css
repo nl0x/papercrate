@@ -751,7 +751,6 @@ button.icon-button.ghost:hover:not([disabled]) {
 }
 
 .column + .column {
-  border-left: none;
   padding-left: 1.25rem;
 }
 
@@ -847,7 +846,6 @@ button.icon-button.ghost:hover:not([disabled]) {
   color: inherit;
   transition: background 0.12s ease, color 0.12s ease;
   position: relative;
-  display: inline-block;
 }
 
 .folder-row span.name {
@@ -1511,6 +1509,7 @@ button.icon-button.ghost:hover:not([disabled]) {
   position: relative;
   padding: 1.25rem;
   overflow-y: auto;
+  border-left: 1px solid var(--border);
 }
 
 .detail-panel .column-body {

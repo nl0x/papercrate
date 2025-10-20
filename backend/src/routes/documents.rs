@@ -118,12 +118,33 @@ pub struct DocumentAssetResponse {
     pub id: Uuid,
     pub asset_type: String,
     pub mime_type: String,
+    pub metadata: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<Value>,
+    pub cardinality: Option<i32>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct DocumentAssetObjectResponse {
+    pub id: Uuid,
+    pub ordinal: i32,
+    pub metadata: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<String>,
+    pub expires_at: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub struct DocumentAssetDetailResponse {
+    pub id: Uuid,
+    pub asset_type: String,
+    pub mime_type: String,
+    pub metadata: Value,
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cardinality: Option<i32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub objects: Vec<DocumentAssetObjectResponse>,
 }
 
 #[derive(Serialize, Clone)]
@@ -337,6 +358,14 @@ pub struct MoveDocumentRequest {
 #[derive(Deserialize)]
 pub struct AssignTagsRequest {
     pub tag_ids: Vec<Uuid>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct AssetObjectsQuery {
+    #[serde(default)]
+    pub start: Option<i32>,
+    #[serde(default)]
+    pub limit: Option<i32>,
 }
 
 pub async fn list_documents(
@@ -852,46 +881,70 @@ pub async fn list_document_assets(
 
 pub async fn get_document_asset(
     State(state): State<AppState>,
-    Path((document_id, asset_id)): Path<(Uuid, Uuid)>,
-) -> AppResult<Json<DocumentAssetResponse>> {
+    Path(asset_id): Path<Uuid>,
+    Query(query): Query<AssetObjectsQuery>,
+) -> AppResult<Json<DocumentAssetDetailResponse>> {
     let mut conn = state.db()?;
-    let document: Document = documents::table.find(document_id).first(&mut conn)?;
-    if document.deleted_at.is_some() {
-        return Err(AppError::not_found());
+
+    let asset: DocumentAsset = match document_assets::table
+        .find(asset_id)
+        .first(&mut conn)
+        .optional()?
+    {
+        Some(asset) => asset,
+        None => return Err(AppError::not_found()),
+    };
+
+    let start = query.start.unwrap_or(1);
+    let limit = query.limit.unwrap_or(1);
+    if start < 1 {
+        return Err(AppError::bad_request("start must be at least 1"));
+    }
+    if limit < 1 {
+        return Err(AppError::bad_request("limit must be at least 1"));
     }
 
-    let (asset, object): (DocumentAsset, DocumentAssetObject) = document_assets::table
-        .inner_join(
-            document_asset_objects::table.on(document_asset_objects::asset_id
-                .eq(document_assets::id)
-                .and(document_asset_objects::ordinal.eq(1))),
-        )
-        .filter(document_assets::id.eq(asset_id))
-        .first(&mut conn)?;
-    let version: DocumentVersion = document_versions::table
-        .find(asset.document_version_id)
-        .first(&mut conn)?;
+    let end = start
+        .checked_add(limit - 1)
+        .ok_or_else(|| AppError::bad_request("requested range is too large"))?;
 
-    if version.document_id != document_id {
-        return Err(AppError::not_found());
-    }
+    let objects: Vec<DocumentAssetObject> = document_asset_objects::table
+        .filter(document_asset_objects::asset_id.eq(asset_id))
+        .filter(document_asset_objects::ordinal.ge(start))
+        .filter(document_asset_objects::ordinal.le(end))
+        .order(document_asset_objects::ordinal.asc())
+        .load(&mut conn)?;
 
-    let s3_key = object.s3_key.clone();
-    let object_metadata = object.metadata.clone();
     drop(conn);
 
-    let presigned_url = state
-        .storage
-        .presign_get_object(&s3_key, Duration::from_secs(PRESIGNED_URL_EXPIRY_SECONDS))
-        .await
-        .map_err(|err| AppError::internal(format!("failed to generate asset URL: {err}")))?;
+    let expires_at = Utc::now()
+        .timestamp_millis()
+        .checked_add((PRESIGNED_URL_EXPIRY_SECONDS as i64) * 1000)
+        .ok_or_else(|| AppError::internal("failed to compute expiry timestamp"))?;
 
-    Ok(Json(to_asset_response(
-        asset,
-        Some(object_metadata),
-        Some(presigned_url),
-        AssetResponseScope::Detailed,
-    )))
+    let mut object_responses = Vec::with_capacity(objects.len());
+    for object in objects {
+        let url = state
+            .storage
+            .presign_get_object(
+                &object.s3_key,
+                Duration::from_secs(PRESIGNED_URL_EXPIRY_SECONDS),
+            )
+            .await
+            .map_err(|err| AppError::internal(format!("failed to generate asset URL: {err}")))?;
+
+        object_responses.push(to_asset_object_response(
+            object,
+            Some(url),
+            Some(expires_at),
+        ));
+    }
+
+    if object_responses.is_empty() {
+        return Err(AppError::not_found());
+    }
+
+    Ok(Json(to_asset_detail_response(asset, object_responses)))
 }
 
 pub async fn download_document(
@@ -1819,14 +1872,9 @@ pub(crate) async fn load_primary_assets(
         .load(&mut conn)?;
 
     let mut assets_by_version: HashMap<Uuid, Vec<DocumentAssetResponse>> = HashMap::new();
-    for (asset, object) in assets {
+    for (asset, _object) in assets {
         let version_id = asset.document_version_id;
-        let response = to_asset_response(
-            asset,
-            object.map(|o| o.metadata),
-            None,
-            AssetResponseScope::Summary,
-        );
+        let response = to_asset_summary(asset);
         assets_by_version
             .entry(version_id)
             .or_default()
@@ -1916,52 +1964,42 @@ fn to_version_response(
     }
 }
 
-fn merge_metadata(base: &Value, overlay: Option<&Value>) -> Value {
-    match (base, overlay) {
-        (Value::Object(base_obj), Some(Value::Object(overlay_obj))) => {
-            let mut merged = base_obj.clone();
-            for (key, value) in overlay_obj {
-                merged.insert(key.clone(), value.clone());
-            }
-            Value::Object(merged)
-        }
-        (_, Some(value)) => value.clone(),
-        (value, None) => value.clone(),
+fn to_asset_summary(asset: DocumentAsset) -> DocumentAssetResponse {
+    DocumentAssetResponse {
+        id: asset.id,
+        asset_type: asset.asset_type,
+        mime_type: asset.mime_type,
+        metadata: asset.metadata,
+        cardinality: asset.cardinality,
     }
 }
 
-#[derive(Clone, Copy)]
-enum AssetResponseScope {
-    Summary,
-    Detailed,
+fn to_asset_detail_response(
+    asset: DocumentAsset,
+    objects: Vec<DocumentAssetObjectResponse>,
+) -> DocumentAssetDetailResponse {
+    DocumentAssetDetailResponse {
+        id: asset.id,
+        asset_type: asset.asset_type,
+        mime_type: asset.mime_type,
+        metadata: asset.metadata,
+        created_at: to_iso(asset.created_at),
+        cardinality: asset.cardinality,
+        objects,
+    }
 }
 
-fn to_asset_response(
-    asset: DocumentAsset,
-    object_metadata: Option<Value>,
+fn to_asset_object_response(
+    object: DocumentAssetObject,
     url: Option<String>,
-    scope: AssetResponseScope,
-) -> DocumentAssetResponse {
-    match scope {
-        AssetResponseScope::Summary => DocumentAssetResponse {
-            id: asset.id,
-            asset_type: asset.asset_type,
-            mime_type: asset.mime_type,
-            metadata: None,
-            url: None,
-            created_at: None,
-        },
-        AssetResponseScope::Detailed => {
-            let metadata = merge_metadata(&asset.metadata, object_metadata.as_ref());
-            DocumentAssetResponse {
-                id: asset.id,
-                asset_type: asset.asset_type,
-                mime_type: asset.mime_type,
-                metadata: Some(metadata),
-                url,
-                created_at: Some(to_iso(asset.created_at)),
-            }
-        }
+    expires_at: Option<i64>,
+) -> DocumentAssetObjectResponse {
+    DocumentAssetObjectResponse {
+        id: object.id,
+        ordinal: object.ordinal,
+        metadata: object.metadata,
+        url,
+        expires_at,
     }
 }
 
@@ -2023,14 +2061,7 @@ async fn load_asset_responses(
 
     Ok(assets
         .into_iter()
-        .map(|(asset, object)| {
-            to_asset_response(
-                asset,
-                object.map(|o| o.metadata),
-                None,
-                AssetResponseScope::Detailed,
-            )
-        })
+        .map(|(asset, _object)| to_asset_summary(asset))
         .collect())
 }
 

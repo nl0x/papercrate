@@ -37,7 +37,7 @@ Document Assets
 ---------------
 - GET  /api/documents/:id/assets - List generated assets for the current version.
 - POST /api/documents/:id/assets - Request (re)generation of document assets; accepts optional `force` query flag.
-- GET  /api/documents/:id/assets/:asset_id - Fetch metadata and a pre-signed URL for a specific asset.
+- GET  /api/assets/:asset_id - Fetch asset metadata plus a presigned URL for a range of objects (query params: `start` and `limit`, defaulting to the first object).
 
 Downloads
 ---------

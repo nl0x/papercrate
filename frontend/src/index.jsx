@@ -413,11 +413,13 @@ const AppLayout = () => {
 
   const isAssetEquivalent = (lhs, rhs) => {
     if (!lhs || !rhs) return false;
+    const lhsPrimaryMetadata = lhs?.objects?.[0]?.metadata || lhs?.metadata;
+    const rhsPrimaryMetadata = rhs?.objects?.[0]?.metadata || rhs?.metadata;
     return (
       lhs.id === rhs.id &&
       lhs.url === rhs.url &&
-      lhs?.metadata?.width === rhs?.metadata?.width &&
-      lhs?.metadata?.height === rhs?.metadata?.height &&
+      lhsPrimaryMetadata?.width === rhsPrimaryMetadata?.width &&
+      lhsPrimaryMetadata?.height === rhsPrimaryMetadata?.height &&
       lhs.mime_type === rhs.mime_type &&
       lhs.asset_type === rhs.asset_type &&
       lhs.created_at === rhs.created_at

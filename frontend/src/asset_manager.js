@@ -172,7 +172,7 @@ class AssetManager {
     return next;
   }
 
-  ensureAsset(documentId, asset, { force = false } = {}) {
+  ensureAsset(documentId, asset, { force = false, start = null, limit = null } = {}) {
     if (!documentId || !asset?.id) {
       return Promise.resolve(asset || null);
     }
@@ -189,7 +189,7 @@ class AssetManager {
       return Promise.resolve({ ...asset, ...cached });
     }
 
-    const inflightKey = `${documentId}:${asset.id}`;
+    const inflightKey = `${documentId}:${asset.id}:${start ?? 'd'}:${limit ?? 'd'}`;
     if (!force && this.assetInflight.has(inflightKey)) {
       return this.assetInflight.get(inflightKey);
     }
@@ -198,13 +198,31 @@ class AssetManager {
       return Promise.reject(new Error('AssetManager API client is not configured.'));
     }
 
+    const params = {};
+    if (Number.isInteger(start) && start > 0) {
+      params.start = start;
+    }
+    if (Number.isInteger(limit) && limit > 0) {
+      params.limit = limit;
+    }
+
+    const requestConfig = Object.keys(params).length ? { params } : undefined;
+
     const request = this.api
-      .get(`/documents/${documentId}/assets/${asset.id}`)
+      .get(`/assets/${asset.id}`, requestConfig)
       .then(({ data }) => {
+        const objects = Array.isArray(data.objects) ? data.objects : [];
+        const primaryObject = objects[0] || null;
+        const expiresAt = typeof primaryObject?.expires_at === 'number'
+          ? primaryObject.expires_at
+          : Date.now() + this.assetPresignTtlMs;
+
         const entry = {
           ...asset,
           ...data,
-          expiresAt: Date.now() + this.assetPresignTtlMs,
+          objects,
+          url: primaryObject?.url || null,
+          expiresAt,
         };
         this.rememberAsset(entry);
         return entry;
