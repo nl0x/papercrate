@@ -258,6 +258,13 @@ const DocumentsTable = ({
     [onClearSelection],
   );
 
+  const showDefaultEmptyState = !showingSearchResults && !subfolders.length && rows.length === 0;
+  const showListSearchEmptyState =
+    showingSearchResults && rows.length === 0 && !isGridView && !isSearchLoading;
+  const showGridSearchEmptyState =
+    isGridView && showingSearchResults && rows.length === 0 && !isSearchLoading;
+  const showSearchHint = showingSearchResults && rows.length > 0;
+
   return (
     <section
       className={`documents-panel column documents-panel--view-${isGridView ? 'grid' : 'list'}`}
@@ -327,6 +334,16 @@ const DocumentsTable = ({
           </button>
         </div>
       </div>
+      {showDefaultEmptyState && (
+        <div className="empty-state">
+          Drop files anywhere or onto a folder to upload documents.
+        </div>
+      )}
+      {showGridSearchEmptyState && (
+        <div className="empty-state empty-state--global">
+          No documents match the current filters.
+        </div>
+      )}
       <div className="column-body">
         <div
           ref={scrollRef}
@@ -347,11 +364,7 @@ const DocumentsTable = ({
           }}
           aria-activedescendant={isGridView ? undefined : activeDescendantId}
         >
-          {!showingSearchResults && !subfolders.length && rows.length === 0 ? (
-            <div className="empty-state">
-              Drop files anywhere or onto a folder to upload documents.
-            </div>
-          ) : isGridView ? (
+          {showDefaultEmptyState ? null : isGridView ? (
             <div
               className="documents-grid"
               role="list"
@@ -797,23 +810,18 @@ const DocumentsTable = ({
             </table>
           )}
         </div>
-        {rows.length === 0 && showingSearchResults && !isGridView && !isSearchLoading && (
+        {showListSearchEmptyState && (
           <div className="empty-state">No documents match the current filters.</div>
         )}
-        {showingSearchResults && rows.length > 0 && (
+        {showSearchHint && (
           <div className="search-hint">
             Showing {rows.length} document{rows.length === 1 ? '' : 's'} in {currentFolderName} and subfolders.
           </div>
         )}
       </div>
-      {isGridView && showingSearchResults && rows.length === 0 && !isSearchLoading && (
-        <div className="empty-state empty-state--global">
-          No documents match the current filters.
-        </div>
-      )}
     </section>
   );
-}; 
+};
 
 export default DocumentsTable;
 export { DocumentThumbnailImage };
