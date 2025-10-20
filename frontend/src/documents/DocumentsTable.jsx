@@ -1,16 +1,25 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import {getAssetFromVersion, resolveDocumentAssetUrl} from '../asset_manager';
+import { getAssetFromVersion, resolveDocumentAssetUrl } from '../asset_manager';
 import { getTagColorStyle } from '../utils/colors';
 import { DownloadIcon, EditIcon, ViewListIcon, ViewGridIcon, FolderIcon } from '../ui/icons';
 
 const TAG_MIME_TYPES = ['application/x-papercrate-tag', 'text/papercrate-tag'];
+const DEFAULT_GRID_ICON_SIZE = 96;
+const DEFAULT_GRID_TITLE_SIZE = '11px';
+const LIST_ICON_SIZE = 48;
 
 const getPageCount = (doc) =>
   Number.isFinite(doc?.current_version?.metadata?.page_count)
     ? doc.current_version.metadata.page_count
     : null;
 
-const DocumentThumbnailImage = ({ document, ensureAssetUrl, getDocumentAsset, alt, maxSize = 48 }) => {
+const DocumentThumbnailImage = ({
+  document,
+  ensureAssetUrl,
+  getDocumentAsset,
+  alt,
+  maxSize = LIST_ICON_SIZE,
+}) => {
   const resolvedMaxSize = Math.max(1, Math.round(maxSize || 1));
   const thumbnailAsset = useMemo(() => getAssetFromVersion(document?.current_version, 'thumbnail'), [document?.current_version]);
   const assetWidth = Number(thumbnailAsset?.metadata?.width);
@@ -129,6 +138,7 @@ const DocumentsTable = ({
   );
   const scrollRef = useRef(null);
   const isGridView = viewMode === 'grid';
+  const gridIconSize = DEFAULT_GRID_ICON_SIZE;
   const handleSetViewMode = useCallback(
     (nextMode) => {
       if (!onViewModeChange) {
@@ -369,6 +379,7 @@ const DocumentsTable = ({
               className="documents-grid"
               role="list"
               onClick={handleGridBackgroundClick}
+              style={{ '--documents-grid-icon-size': `${gridIconSize}px` }}
             >
               {!showingSearchResults &&
                 subfolders.map((folder) => {
@@ -417,7 +428,7 @@ const DocumentsTable = ({
                       <div className="folder-card__icon">
                         <FolderIcon
                           className="folder-card__icon-svg"
-                          size={128}
+                          size={gridIconSize}
                         />
                       </div>
                       <div className="folder-card__meta">
@@ -461,7 +472,7 @@ const DocumentsTable = ({
                       ensureAssetUrl={ensureAssetUrl}
                       getDocumentAsset={getDocumentAsset}
                       alt={`Thumbnail for ${doc.title || doc.original_name}`}
-                      maxSize={128}
+                      maxSize={gridIconSize}
                     />
                     <div className="document-card__meta">
                       <div
